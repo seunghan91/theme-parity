@@ -2,17 +2,38 @@
 
 Finds light/dark theme token defects across web, iOS, and Android — in one pass.
 
+![How an undefined dark token silently removes a background](assets/hero.png)
+
 Two failure modes it exists for:
 
 1. **A color token has no dark counterpart.** The light value is silently reused in dark mode. Nothing errors; the build passes.
 2. **A token is referenced but never defined.** In CSS, `var(--missing)` without a fallback is *invalid at computed-value time* — the whole declaration is dropped. For `background-color`, that means **transparent**. No error, no warning, no build failure. It only shows up as "the background disappeared in dark mode."
 
-Measured, not asserted:
+Measured in Chromium, not asserted:
 
 ```
-background-color: red; background-color: var(--nope);   → rgba(0, 0, 0, 0)
+background-color: red; background-color: var(--nope);       → rgba(0, 0, 0, 0)
 background-color: red; background-color: var(--nope, blue); → rgb(0, 0, 255)
 ```
+
+*(The screenshot above is rendered by a real browser and asserted — the broken card's computed `background-color` is `rgba(0, 0, 0, 0)`, not a color chosen to look transparent.)*
+
+## What it looks like
+
+```console
+$ theme_parity.py app/assets/stylesheets --refs app/views
+
+[css] 124 tokens · 17 with dark (14%) · backgrounds ['--surface-card', …]
+
+🔴 [undefined-ref]  --color-primary-950  referenced in 9 place(s) (checkouts/show.html.erb et al.)
+                                         — never defined, no fallback; resolves to transparent/invalid
+🔴 [undefined-ref]  --qr-text-subtle     referenced in 10 place(s) (adhoc/favorites/_form.html.erb et al.)
+🔴 [missing-dark]   --color-primary-50   no dark entry — the light value is reused in dark mode
+⚠ [identical-modes] --border-strong      #E5E7EB in both modes — defined but not adapted
+⚠ [hardcoded-total] 163 literal color(s) · 695 occurrence(s) (top 15 listed)
+```
+
+Exit code is `1` when any error-level finding exists, so it drops into CI unchanged.
 
 ## Why this is a structural problem, not a discipline problem
 
