@@ -97,6 +97,19 @@ check("a URL glob (/path/*) does not swallow later declarations",
       "undefined-ref" not in kinds_for(data, "--url-guard-token"))
 
 print()
+
+
+def test_all():
+    """pytest 진입점.
+
+    이 파일은 원래 순차 스크립트였다. pytest 는 `test_` 로 시작하는 함수만
+    수집하므로, CI 가 pytest 를 돌리면 **0개 실행 후 초록**이 나왔다 —
+    0건을 무결로 읽는, 이 도구가 막으려는 바로 그 함정을 테스트가 저지른 셈이다.
+    모듈 임포트 시점에 위 검사들이 이미 실행되므로 여기서는 결과만 단언한다.
+    """
+    assert not failures, "실패: " + "; ".join(failures)
+
+
 if failures:
     print(f"FAILED {len(failures)}:")
     for f in failures:

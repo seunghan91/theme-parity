@@ -56,7 +56,13 @@ Pair-requiring APIs don't need a rule. Pair-optional APIs need a checker. This i
 python3 theme_parity.py <token-root> [--platform auto|css|xcassets|android|swift]
 python3 theme_parity.py <token-root> --refs <view-dir>    # + undefined refs, hardcoded colors
 python3 theme_parity.py <token-root> --json               # exit 1 on errors
+python3 theme_parity.py <token-root> --only undefined-ref # gate on one check
+python3 theme_parity.py <token-root> --ignore='--brand-*'  # mute by name glob
 ```
+
+`--only` and `--ignore` exist because a checker with no volume control gets muted entirely. Gate CI on `undefined-ref` first; treat the rest as advisory until the noise is down.
+
+Note the `=`: a glob starting with `--` must be written `--ignore='--brand-*'`, otherwise argparse reads it as a flag.
 
 Examples:
 
@@ -104,9 +110,18 @@ If it reads zero tokens it exits with an error rather than reporting success —
 - **Generated output is excluded** (`builds/`, `dist/`, `node_modules/`, `.build/`, …). Counting generated files as definitions hides drift.
 - **Definition-ness and color-parseability are separate.** Otherwise every non-color token (`--radius-*`, `--shadow-*`) is reported as undefined and the output becomes noise.
 
+## Tests
+
+```bash
+python3 tests/test_audit.py     # direct
+python3 -m pytest tests/ -q     # pytest
+```
+
+The suite plants known defects and asserts they are caught, and asserts that legitimate neighbours are *not* flagged — false positives are what get a checker ignored, so they are tested as failures too.
+
 ## Requirements
 
-Python 3.8+. No dependencies.
+Python 3.8+ and no dependencies for the checker. `tests/verify_css_behavior.py` additionally needs playwright.
 
 ## License
 

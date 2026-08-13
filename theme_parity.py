@@ -580,6 +580,14 @@ def main():
     ap.add_argument("--min", type=float, default=4.5)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--lang", default="en", choices=sorted(MSG))
+    ap.add_argument("--ignore", action="append", default=[], metavar="GLOB",
+                    help="토큰 이름 glob — 매치하면 결과에서 제외 (반복 지정 가능). "
+                         "다크가 필요 없는 토큰(로고색·런처 배경)을 끄는 용도. "
+                         "끄는 수단이 없으면 소음 때문에 도구 전체가 무시된다. "
+                         "값이 --로 시작하므로 --ignore='--brand*' 처럼 = 로 붙여 쓴다.")
+    ap.add_argument("--only", action="append", default=[], metavar="KIND",
+                    help="이 kind 만 보고 (예: undefined-ref). 신뢰도 높은 검사만 "
+                         "CI 게이트로 쓰고 나머지는 참고로 둘 때.")
     a = ap.parse_args()
     global LANG
     LANG = a.lang
@@ -620,6 +628,14 @@ def main():
     for name, expr in unresolved:
         findings.append({"kind": "unresolved-dark", "token": name, "severity": "warn",
                          "detail": _m("unresolved", expr=expr)})
+
+    if a.ignore:
+        import fnmatch
+        findings = [f for f in findings
+                    if not any(fnmatch.fnmatch(str(f.get("token", "")), g)
+                               for g in a.ignore)]
+    if a.only:
+        findings = [f for f in findings if f["kind"] in a.only]
 
     n_dark = sum(1 for e in tokens.values() if "dark" in e)
     if a.json:
