@@ -93,6 +93,10 @@ This was built against a specific stack and is honest about that:
 - **CSS parsing is regex-based.** Nested rules, SCSS control flow, and CSS-in-JS are not properly handled. Flat custom-property blocks work well; complex preprocessor output may be misread.
 - **The Swift loader keys on a `make(light:dark:)`-shaped declaration.** Projects using Asset Catalogs, `UITraitCollection` closures written differently, or another naming convention will read **zero tokens** — which the tool reports as a failure rather than a pass, but it still means no coverage.
 - **Android reads `res/values/colors.xml` vs `values-night/`.** Jetpack Compose `Color.kt` / `lightColorScheme` is **not** parsed yet. On Compose-first projects the token count will be misleadingly small.
+- **Only hex color values are parsed.** Tokens whose value is `hsl()`, `oklch()`, raw channels, or an alias (`var(--other)`) are invisible to the pair check — which means a semantic token layer built on aliases, the very structure most worth adopting, is the structure this tool covers worst.
+- **Fallback chains are not followed.** `var(--a, var(--b))` is treated as having a fallback and skipped; whether `--b` exists is not checked.
+- **An inline declaration counts globally.** `style="--x: red"` in one template marks `--x` defined for every file, so `undefined-ref` is less trustworthy for template-scoped properties than the table above suggests.
+- **Nested at-rules are not tracked properly.** A dark block wrapped in an extra `@supports` may be recorded as light.
 - **`low-contrast` infers backgrounds from token names** and produces false positives. It is a hint, not a verdict.
 - **Reference scanning is text-based, not semantic.** Comments are stripped before scanning, but string literals are not distinguished from code. A color literal inside a JS string or documentation snippet can be reported as hardcoded.
 - **`hardcoded-color` means "a color literal was found in this file"**, not "this color is rendered". Gradients, SVG fills, and example code all match.

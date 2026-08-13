@@ -96,8 +96,26 @@ check("oklch() detected as hardcoded", any(t.startswith("oklch(") for t in lits)
 check("a URL glob (/path/*) does not swallow later declarations",
       "undefined-ref" not in kinds_for(data, "--url-guard-token"))
 
-print()
+print("case: hex alpha byte order differs by platform")
+sys.path.insert(0, os.path.join(HERE, ".."))
+import theme_parity as _tp
+_red = (1.0, 0.0, 0.0)
+def _approx(v, x): return abs(v - x) < 0.01
+css8 = _tp._hex_rgb("#FF000080")
+check("CSS #RRGGBBAA reads as red at ~50% alpha",
+      css8 and css8[0] == _red and _approx(css8[1], 0.5))
+css4 = _tp._hex_rgb("#F008")
+check("CSS #RGBA shorthand is parsed, not dropped",
+      css4 is not None and css4[0] == _red)
+and8 = _tp._hex_rgb("#80FF0000", order="argb")
+check("Android #AARRGGBB reads as red at ~50% alpha",
+      and8 and and8[0] == _red and _approx(and8[1], 0.5))
+sw8 = _tp._hex_rgb("0x80FF0000")
+check("Swift 0xAARRGGBB reads as red at ~50% alpha",
+      sw8 and sw8[0] == _red and _approx(sw8[1], 0.5))
+check("garbage hex returns None", _tp._hex_rgb("#zzz") is None)
 
+print()
 
 def test_all():
     """pytest 진입점.

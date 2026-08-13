@@ -161,17 +161,30 @@ def _walk(root, want):
                 yield os.path.join(dirpath, fn)
 
 
-def _hex_rgb(h):
-    """'#RGB' / '#RRGGBB' / '0xRRGGBB' / 'RRGGBBAA' → ((r,g,b), alpha) 0..1"""
+def _hex_rgb(h, order="rgba"):
+    """hex 문자열 → ((r,g,b), alpha) 0..1.
+
+    🔴 알파 바이트 위치가 플랫폼마다 다르다:
+      CSS              `#RRGGBBAA` / `#RGBA`   → order="rgba"
+      Android/Compose  `#AARRGGBB` / `0xAARRGGBB` → order="argb"
+    한 함수가 둘을 뭉뚱그리면 CSS 의 `#FF000080`(빨강 50%)이 불투명 네이비로
+    읽힌다 — 색이 틀린 채로 대비·동일값 판정이 진행된다.
+    """
     s = h.strip().lstrip("#")
     if s.lower().startswith("0x"):
         s = s[2:]
-    if len(s) == 3:
+        order = "argb"       # 0x 접두는 Swift/Compose 관례
+    if not re.fullmatch(r"[0-9a-fA-F]+", s or ""):
+        return None
+    if len(s) in (3, 4):     # 축약형은 각 자리를 두 배로
         s = "".join(c * 2 for c in s)
-    if len(s) == 8:          # Android/Compose 는 AARRGGBB
-        a = int(s[0:2], 16) / 255.0
-        s = s[2:]
-        return (tuple(int(s[i:i + 2], 16) / 255.0 for i in (0, 2, 4)), a)
+    if len(s) == 8:
+        if order == "argb":
+            a, body = s[0:2], s[2:]
+        else:
+            a, body = s[6:8], s[0:6]
+        return (tuple(int(body[i:i + 2], 16) / 255.0 for i in (0, 2, 4)),
+                int(a, 16) / 255.0)
     if len(s) != 6:
         return None
     return (tuple(int(s[i:i + 2], 16) / 255.0 for i in (0, 2, 4)), 1.0)
@@ -279,7 +292,7 @@ def load_android(root):
         except Exception:
             continue
         for name, val in re.findall(r'<color\s+name="([^"]+)"\s*>([^<]+)</color>', xml):
-            rgb = _hex_rgb(val)
+            rgb = _hex_rgb(val, order="argb")   # Android 는 #AARRGGBB
             if rgb:
                 (dark if is_dark else light)[name] = rgb
     tokens = {}
@@ -616,9 +629,18 @@ def main():
             sys.exit(1)
         sys.exit(msg)
 
+    if a.bg:
+        want = [b.strip() for b in a.bg.split(",")]
+        unknown = [b for b in want if b not in tokens]
+        if len(unknown) == len(want):
+            sys.exit(f"--bg matched no token: {', '.join(unknown)}")
+        for b in unknown:
+            print(f"⚠ --bg: unknown token '{b}' ignored", file=sys.stderr)
     findings, bgs = audit(tokens, a.bg.split(",") if a.bg else None, a.min)
     for g in a.group:
         findings += audit_categorical(tokens, g)
+    if a.refs and not os.path.exists(a.refs):
+        sys.exit(f"--refs path does not exist: {a.refs}")
     if a.refs:
         # 정의 집합 = 색으로 파싱된 토큰 ∪ 선언된 모든 커스텀 프로퍼티 이름
         # (정본 트리 + 뷰 안 인라인 선언). 색 파서가 못 읽은 비색상 토큰을
