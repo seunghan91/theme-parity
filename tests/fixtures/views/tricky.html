@@ -9,3 +9,11 @@
 <div style="color: #fff; background: hsl(210 40% 96%); border-color: oklch(0.7 0.1 200);">
   short hex, hsl, oklch must all be seen as hardcoded
 </div>
+<!-- a URL containing /* must not be mistaken for a comment opener.
+     If it is, every declaration until the next */ gets deleted. -->
+<p>allowed paths: /booking/manage/*</p>
+<style>
+  /* real comment */
+  :root { --url-guard-token: #123456; }
+</style>
+<div style="color: var(--url-guard-token);">defined right after a URL glob</div>

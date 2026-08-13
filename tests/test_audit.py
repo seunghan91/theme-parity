@@ -93,6 +93,9 @@ for lit in ("#fff",):
 check("hsl() detected as hardcoded", any(t.startswith("hsl(") for t in lits))
 check("oklch() detected as hardcoded", any(t.startswith("oklch(") for t in lits))
 
+check("a URL glob (/path/*) does not swallow later declarations",
+      "undefined-ref" not in kinds_for(data, "--url-guard-token"))
+
 print()
 if failures:
     print(f"FAILED {len(failures)}:")

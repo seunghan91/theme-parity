@@ -144,8 +144,12 @@ def _m(key, **kw):
 # 의존성·빌드 산출물. 여기 있는 토큰은 우리 것이 아니라 검사 대상이 아니다.
 # `builds`/`dist` 는 생성물이다. 생성물을 정의 소스로 세면 소스에 없는 토큰이
 # '정의됨'으로 통과해 드리프트를 은폐한다 — 정본만 읽어야 한다.
+# `.claude`/`worktrees` — 에이전트 워크트리·세션 사본. 레포 안에 레포가 통째로
+# 들어앉아 있어 스캔하면 남의 브랜치 토큰이 이 프로젝트 결함으로 집계된다
+# (실측: 한 레포에서 보고된 미정의 15종 중 대부분이 워크트리 사본이었다).
 SKIP_DIRS = (".build", "builds", "node_modules", "Pods", "DerivedData", "vendor",
-             "tmp", ".git", "build", "dist", ".next", "Carthage", "coverage")
+             "tmp", ".git", "build", "dist", ".next", "Carthage", "coverage",
+             ".claude", "worktrees", ".worktrees", "Examples", "example")
 
 
 def _walk(root, want):
@@ -413,9 +417,13 @@ def _strip_comments(src):
     (codex 리뷰에서 재현됨). 반대로 주석 속 `var(--y)` 를 참조로 세면 오탐이 된다.
     문자열 리터럴까지 구분하려면 실제 파서가 필요하다 — 그건 알려진 한계다.
     """
-    src = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
+    # `/*` 는 앞에 단어문자·슬래시가 없을 때만 주석 시작으로 본다.
+    # 그렇게 하지 않으면 URL 경로(`/booking/manage/*`)나 glob 패턴이 주석을
+    # 여는 것으로 오인되고, 그 뒤 첫 `*/` 까지의 **실제 코드가 통째로 삭제**된다.
+    # 실측: 이 오인 하나가 토큰 정의 20줄을 지워 정상 토큰을 미정의로 보고했다.
+    src = re.sub(r"(?<![\w/:.\-])/\*.*?\*/", " ", src, flags=re.S)
     src = re.sub(r"<!--.*?-->", " ", src, flags=re.S)
-    src = re.sub(r"(?m)(?<![:\w])//[^\n]*$", " ", src)
+    src = re.sub(r"(?m)(?<![:\w/])//[^\n]*$", " ", src)
     return src
 
 
@@ -454,7 +462,7 @@ def collect_declared(*roots):
     return names
 
 
-def audit_refs(view_root, defined):
+def audit_refs(view_root, defined, platform="css"):
     """뷰(템플릿)가 참조하는 토큰이 실재하는지 + 절대색 하드코딩.
 
     미정의 var 참조는 CSS 가 조용히 삼킨다 — 폴백 없는 `var(--없음)` 은 그 선언을
@@ -479,8 +487,11 @@ def audit_refs(view_root, defined):
             if m.group(2):        # 폴백이 있으면 조용히 죽지 않는다
                 continue
             seen_ref.setdefault(m.group(1), []).append(rel)
-        for m in re.finditer(r"@color/([\w.]+)", src):
-            seen_ref.setdefault(m.group(1), []).append(rel)
+        if platform == "android":
+            # `@color/x` 는 Android 리소스 참조다. 플랫폼 구분 없이 수집하면
+            # 웹 검사에서 ic_launcher_* 같은 것이 미정의 CSS 변수로 둔갑한다.
+            for m in re.finditer(r"@color/([\w.]+)", src):
+                seen_ref.setdefault(m.group(1), []).append(rel)
         # 하드코딩 절대색 — 토큰을 우회하므로 다크에서 그대로 남는다
         for m in re.finditer(
                 r"(?<![\w-])#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})(?![\w-])"
@@ -489,6 +500,10 @@ def audit_refs(view_root, defined):
 
     for name, files in sorted(seen_ref.items()):
         if name in defined:
+            continue
+        # 이름이 하이픈으로 끝나면 문자열 보간의 잘린 조각이다
+        # (`--color-speaker-${i}`, `--surface-#{level}`). 실제 토큰명이 아니다.
+        if name.endswith("-"):
             continue
         u = sorted(set(files))
         findings.append({
@@ -601,7 +616,7 @@ def main():
         # (정본 트리 + 뷰 안 인라인 선언). 색 파서가 못 읽은 비색상 토큰을
         # 미정의로 오탐하지 않기 위해 반드시 분리해서 모은다.
         declared = set(tokens) | collect_declared(a.root, a.refs)
-        findings += audit_refs(a.refs, declared)
+        findings += audit_refs(a.refs, declared, platform=plat)
     for name, expr in unresolved:
         findings.append({"kind": "unresolved-dark", "token": name, "severity": "warn",
                          "detail": _m("unresolved", expr=expr)})
