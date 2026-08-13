@@ -1,0 +1,10 @@
+:root {
+  --surface-card: #FFFFFF;
+  --text-body: #1A1A1A;
+  --brand-500: #10B981;
+  --radius-md: 8px;
+}
+.dark {
+  --surface-card: #1E1E1E;
+  --text-body: #F0F0F0;
+}
