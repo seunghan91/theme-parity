@@ -416,7 +416,18 @@ def collect_declared(*roots):
                 src = open(path, encoding="utf-8", errors="ignore").read()
             except Exception:
                 continue
-            names.update(re.findall(r"(--[\w-]+)\s*:", src))
+            # 1) CSS 선언 및 JS/JSON 객체 키 — `--x: v`, `"--x": v`, `'--x': v`
+            names.update(re.findall(r"[\"']?(--[\w-]+)[\"']?\s*:", src))
+            # 2) 프레임워크가 런타임에 주입하는 커스텀 프로퍼티. 정적 스캔으로는
+            #    "선언"처럼 보이지 않지만 실제로는 항상 값이 들어간다. 이걸 빼면
+            #    컴포넌트 로컬 토큰이 전부 미정의로 잡혀 오탐 더미가 된다
+            #    (실측: 한 Svelte 프로젝트에서 보고 80곳 전부가 이 유형이었다).
+            #    Svelte  `style:--x={v}`
+            #    JSX     `style={{ "--x": v }}`  → 위 1) 이 처리
+            #    Vue     `:style="{ '--x': v }"` → 위 1) 이 처리
+            names.update(re.findall(r"style:(--[\w-]+)\s*=", src))
+            # 3) JS 에서 직접 세팅 — setProperty("--x", v)
+            names.update(re.findall(r"setProperty\(\s*[\"'](--[\w-]+)[\"']", src))
     return names
 
 

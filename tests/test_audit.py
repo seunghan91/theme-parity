@@ -75,6 +75,12 @@ print("case: empty/unreadable root must NOT report success")
 data, code = run(os.path.join(FIX, "css"), "--platform", "android")
 check("reading 0 tokens exits non-zero instead of green", code != 0)
 
+print("case: runtime-injected custom properties must NOT be flagged")
+data, code = run(os.path.join(FIX, "css"), "--refs", os.path.join(FIX, "views"))
+for tok in ("--stamp-color", "--stamp-rotation", "--t-bg", "--t-accent"):
+    check(f"runtime-injected {tok} NOT flagged undefined",
+          "undefined-ref" not in kinds_for(data, tok))
+
 print()
 if failures:
     print(f"FAILED {len(failures)}:")
