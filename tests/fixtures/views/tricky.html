@@ -1,0 +1,11 @@
+<!-- a commented-out definition must NOT count as defining anything:
+     --ghost-token: #fff;
+-->
+<div style="background: var(--ghost-token);">must be flagged undefined</div>
+<style>
+  /* a reference inside CSS must be checked too */
+  .in-css { background: var(--only-in-css-missing); }
+</style>
+<div style="color: #fff; background: hsl(210 40% 96%); border-color: oklch(0.7 0.1 200);">
+  short hex, hsl, oklch must all be seen as hardcoded
+</div>

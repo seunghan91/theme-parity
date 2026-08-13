@@ -81,6 +81,18 @@ for tok in ("--stamp-color", "--stamp-rotation", "--t-bg", "--t-accent"):
     check(f"runtime-injected {tok} NOT flagged undefined",
           "undefined-ref" not in kinds_for(data, tok))
 
+print("case: codex-reported gaps")
+data, code = run(os.path.join(FIX, "css"), "--refs", os.path.join(FIX, "views"))
+check("commented-out definition does NOT count as defined",
+      "undefined-ref" in kinds_for(data, "--ghost-token"))
+check("var() reference inside a <style>/css block is checked",
+      "undefined-ref" in kinds_for(data, "--only-in-css-missing"))
+lits = {f["token"] for f in data.get("findings", []) if f["kind"] == "hardcoded-color"}
+for lit in ("#fff",):
+    check(f"short hex {lit} detected as hardcoded", lit in lits)
+check("hsl() detected as hardcoded", any(t.startswith("hsl(") for t in lits))
+check("oklch() detected as hardcoded", any(t.startswith("oklch(") for t in lits))
+
 print()
 if failures:
     print(f"FAILED {len(failures)}:")

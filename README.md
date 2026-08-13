@@ -2,6 +2,8 @@
 
 Finds light/dark theme token defects across web, iOS, and Android — in one pass.
 
+Scope, stated plainly: this reads **CSS custom properties**, **Xcode asset catalogs**, **Android `values`/`values-night` XML**, and **light/dark pair constructors in Swift**. It is not a full CSS or Swift parser, and it does not model a token graph with aliases. See [Limitations](#limitations--read-before-trusting-it).
+
 ![How an undefined dark token silently removes a background](assets/hero.png)
 
 Two failure modes it exists for:
@@ -9,7 +11,7 @@ Two failure modes it exists for:
 1. **A color token has no dark counterpart.** The light value is silently reused in dark mode. Nothing errors; the build passes.
 2. **A token is referenced but never defined.** In CSS, `var(--missing)` without a fallback is *invalid at computed-value time* — the whole declaration is dropped. For `background-color`, that means **transparent**. No error, no warning, no build failure. It only shows up as "the background disappeared in dark mode."
 
-Measured in Chromium, not asserted:
+Measured in Chromium — run `python3 tests/verify_css_behavior.py` to reproduce:
 
 ```
 background-color: red; background-color: var(--nope);       → rgba(0, 0, 0, 0)
@@ -71,7 +73,8 @@ python3 theme_parity.py app/src/main/res --platform android
 | `undefined-ref` — referenced token has no definition, no fallback | error | **High.** Existence is a mechanical fact. |
 | `missing-dark` — no dark counterpart | error | **High**, but some tokens legitimately need none (logo colors, launcher backgrounds). |
 | `identical-modes` — dark is defined but equal to light | warn | High. Defined ≠ adapted. |
-| `hardcoded-color` — literal hex/rgb in templates | warn | Medium. Gradients and shadows are often fine. |
+| `missing-light` — dark defined with no light counterpart | error | High. Same check, opposite direction. |
+| `hardcoded-color` — color literal found in a scanned file | warn | **Low-medium.** Detects the literal, not whether it renders. |
 | `low-contrast` — WCAG pair check | warn/error | **Low by default.** Backgrounds are guessed from token names. Pass `--bg` to make it meaningful. |
 | `cvd-collision` — categorical colors indistinguishable under color-vision deficiency | warn/error | Medium. Use `--group <prefix>` for speaker/tag/chart color sets. |
 
@@ -85,8 +88,12 @@ This was built against a specific stack and is honest about that:
 - **The Swift loader keys on a `make(light:dark:)`-shaped declaration.** Projects using Asset Catalogs, `UITraitCollection` closures written differently, or another naming convention will read **zero tokens** — which the tool reports as a failure rather than a pass, but it still means no coverage.
 - **Android reads `res/values/colors.xml` vs `values-night/`.** Jetpack Compose `Color.kt` / `lightColorScheme` is **not** parsed yet. On Compose-first projects the token count will be misleadingly small.
 - **`low-contrast` infers backgrounds from token names** and produces false positives. It is a hint, not a verdict.
+- **Reference scanning is text-based, not semantic.** Comments are stripped before scanning, but string literals are not distinguished from code. A color literal inside a JS string or documentation snippet can be reported as hardcoded.
+- **`hardcoded-color` means "a color literal was found in this file"**, not "this color is rendered". Gradients, SVG fills, and example code all match.
+- **Android resolution is simplified.** `values-night` is treated as dark and everything else as light; qualifier precedence (`values-night-v31`, `values-land`, …) is not modeled the way the platform resolves it.
+- **The 14-project figures quoted above come from private repositories** and are not reproducible from this repo. Treat them as the author's measurement, not as independently verifiable data. The CSS behavior claim *is* reproducible — see `tests/verify_css_behavior.py`.
 - **Verified on ~14 projects of similar shape** (Rails + Tailwind, SwiftUI). Behavior on other stacks is untested.
-- Output messages are currently in Korean; the API and flags are English. i18n is not done.
+- Messages default to English; `--lang ko` switches to Korean. Source comments are in Korean.
 
 If it reads zero tokens it exits with an error rather than reporting success — reporting "0 problems" when the real cause is "0 files parsed" is the exact failure this tool was written to prevent.
 

@@ -98,6 +98,7 @@ MSG = {
     "en": {
         "identical": "{hex} in both modes — defined but not adapted",
         "missing_dark": "no dark entry — the light value is reused in dark mode",
+        "missing_light": "no light entry — the dark value is reused in light mode",
         "low_contrast": "{mode} worst {ratio:.2f}:1 on {bg}",
         "cvd": "{kind}: {a} ↔ {b} perceptual gap {gap:.1f} — not distinguishable by color alone",
         "undef": "referenced in {n} place(s) ({files}{more}) — never defined, no fallback; "
@@ -116,6 +117,7 @@ MSG = {
     "ko": {
         "identical": "{hex} 가 양 모드 동일 — 정의는 됐지만 적응 안 됨",
         "missing_dark": "dark 항목 없음 — 라이트 값이 다크에서 그대로 쓰인다",
+        "missing_light": "light 항목 없음 — 다크 값이 라이트에서 그대로 쓰인다",
         "low_contrast": "{mode} 최악 {ratio:.2f}:1 on {bg}",
         "cvd": "{kind}: {a} ↔ {b} 지각거리 {gap:.1f} — 색만으로 구분 불가 위험",
         "undef": "참조 {n}곳({files}{more}) — 정의 없음. 폴백도 없어 다크에서 투명/무효가 된다",
@@ -363,6 +365,13 @@ def audit(tokens, bg_names=None, min_ratio=4.5):
                 "kind": "missing-dark", "token": n, "severity": "error",
                 "detail": _m("missing_dark"),
             })
+        elif "light" not in e:
+            # dark 만 있는 토큰. light-first 를 가정하고 조용히 통과시키면
+            # 반대 방향 누락이 영영 안 보인다 — 방향을 대칭으로 둔다.
+            findings.append({
+                "kind": "missing-light", "token": n, "severity": "error",
+                "detail": _m("missing_light"),
+            })
 
     # 2) 전경↔배경 대비
     for mode in ("light", "dark"):
@@ -397,6 +406,19 @@ def audit(tokens, bg_names=None, min_ratio=4.5):
     return findings, bgs
 
 
+def _strip_comments(src):
+    """/* */ · <!-- --> · // 줄주석 제거.
+
+    주석 안의 `--x: #fff` 를 정의로 세면 실제로는 미정의인 토큰이 통과한다
+    (codex 리뷰에서 재현됨). 반대로 주석 속 `var(--y)` 를 참조로 세면 오탐이 된다.
+    문자열 리터럴까지 구분하려면 실제 파서가 필요하다 — 그건 알려진 한계다.
+    """
+    src = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
+    src = re.sub(r"<!--.*?-->", " ", src, flags=re.S)
+    src = re.sub(r"(?m)(?<![:\w])//[^\n]*$", " ", src)
+    return src
+
+
 def collect_declared(*roots):
     """선언된 커스텀 프로퍼티 **이름 전부**. 색이 아닌 것(radius/shadow/spacing)과
     테마 블록·인라인 style 선언까지 포함한다.
@@ -417,6 +439,7 @@ def collect_declared(*roots):
             except Exception:
                 continue
             # 1) CSS 선언 및 JS/JSON 객체 키 — `--x: v`, `"--x": v`, `'--x': v`
+            src = _strip_comments(src)
             names.update(re.findall(r"[\"']?(--[\w-]+)[\"']?\s*:", src))
             # 2) 프레임워크가 런타임에 주입하는 커스텀 프로퍼티. 정적 스캔으로는
             #    "선언"처럼 보이지 않지만 실제로는 항상 값이 들어간다. 이걸 빼면
@@ -440,13 +463,17 @@ def audit_refs(view_root, defined):
       background-color: red; background-color: var(--nope);  → rgba(0,0,0,0)
     """
     findings = []
-    exts = (".erb", ".html", ".haml", ".slim", ".vue", ".svelte", ".jsx", ".tsx", ".xml")
+    # CSS/SCSS/JS/TS 도 포함한다. 이전에는 템플릿만 봐서 스타일시트 안의
+    # `var(--없음)` 과 CSS-in-JS 를 통째로 놓쳤다 (codex 지적).
+    exts = (".erb", ".html", ".haml", ".slim", ".vue", ".svelte", ".jsx", ".tsx",
+            ".xml", ".css", ".scss", ".js", ".ts", ".mjs")
     seen_ref, hard = {}, {}
     for path in sorted(_walk(view_root, lambda f: f.endswith(exts))):
         try:
             src = open(path, encoding="utf-8", errors="ignore").read()
         except Exception:
             continue
+        src = _strip_comments(src)
         rel = os.path.relpath(path, view_root)
         for m in re.finditer(r"var\(\s*(--[\w-]+)\s*(,)?", src):
             if m.group(2):        # 폴백이 있으면 조용히 죽지 않는다
@@ -455,7 +482,9 @@ def audit_refs(view_root, defined):
         for m in re.finditer(r"@color/([\w.]+)", src):
             seen_ref.setdefault(m.group(1), []).append(rel)
         # 하드코딩 절대색 — 토큰을 우회하므로 다크에서 그대로 남는다
-        for m in re.finditer(r"(?<![\w-])#[0-9a-fA-F]{6}(?![\w-])|rgba?\([\d.\s,%/]+\)", src):
+        for m in re.finditer(
+                r"(?<![\w-])#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})(?![\w-])"
+                r"|(?:rgba?|hsla?|oklch|oklab|lab|lch)\([^)]*\)", src):
             hard.setdefault(m.group(0), []).append(rel)
 
     for name, files in sorted(seen_ref.items()):
@@ -556,7 +585,13 @@ def main():
 
     # 0건은 "문제 없음"이 아니라 "못 읽었다"일 수 있다. 조용히 초록을 내지 않는다.
     if not tokens:
-        sys.exit(_m("zero", plat=plat, root=a.root))
+        msg = _m("zero", plat=plat, root=a.root)
+        if a.json:   # CI 는 항상 JSON 을 파싱한다 — 이 경로만 평문이면 거기서 깨진다
+            print(json.dumps({"platform": plat, "tokens": 0, "with_dark": 0,
+                              "error": "no-tokens-parsed", "message": msg},
+                             ensure_ascii=False, indent=2))
+            sys.exit(1)
+        sys.exit(msg)
 
     findings, bgs = audit(tokens, a.bg.split(",") if a.bg else None, a.min)
     for g in a.group:
