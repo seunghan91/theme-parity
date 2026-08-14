@@ -3,3 +3,6 @@
 <div style="background: var(--nope, #fff);">has fallback - must NOT be flagged</div>
 <div style="border-radius: var(--radius-md);">non-color token - must NOT be flagged</div>
 <div style="background: #ABCDEF;">hardcoded</div>
+<div style="color: var(--brand-500); border-color: var(--brand-50);">
+  raw scale referenced straight from a view - bypasses the semantic layer
+</div>

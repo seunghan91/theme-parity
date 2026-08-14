@@ -99,6 +99,9 @@ MSG = {
         "identical": "{hex} in both modes — defined but not adapted",
         "missing_dark": "no dark entry — the light value is reused in dark mode",
         "missing_light": "no light entry — the dark value is reused in light mode",
+        "raw_scale": "{distinct} raw scale step(s) referenced directly in {sites} place(s) "
+                     "(top: {top}) — bypasses the semantic layer, so there is no place to "
+                     "point a different step in dark mode",
         "low_contrast": "{mode} worst {ratio:.2f}:1 on {bg}",
         "cvd": "{kind}: {a} ↔ {b} perceptual gap {gap:.1f} — not distinguishable by color alone",
         "undef": "referenced in {n} place(s) ({files}{more}) — never defined, no fallback; "
@@ -107,7 +110,8 @@ MSG = {
         "hardcoded_total": "{distinct} literal color(s) · {sites} occurrence(s){capped}",
         "capped": " (top 15 listed)",
         "unresolved": "could not resolve dark symbol `{expr}` — blind spot",
-        "header": "[{plat}] {n} tokens · {d} with dark ({pct:.0f}%) · backgrounds {bgs}",
+        "header": "[{plat}] {n} tokens = {sem} semantic + {prim} primitive scale · "
+                  "semantic with dark {d}/{sem} ({pct:.0f}%) · backgrounds {bgs}",
         "clean": "✅ no violations",
         "zero": "🔴 {plat}: read 0 tokens — check the path or format ({root})\n"
                 "   (reporting 0 findings when nothing was parsed is the failure this tool prevents)",
@@ -118,6 +122,8 @@ MSG = {
         "identical": "{hex} 가 양 모드 동일 — 정의는 됐지만 적응 안 됨",
         "missing_dark": "dark 항목 없음 — 라이트 값이 다크에서 그대로 쓰인다",
         "missing_light": "light 항목 없음 — 다크 값이 라이트에서 그대로 쓰인다",
+        "raw_scale": "원시 스케일 {distinct}종을 {sites}곳에서 직접 참조 (상위: {top}) "
+                     "— 시맨틱 레이어를 우회해, 다크에서 다른 단계를 가리킬 지점이 없다",
         "low_contrast": "{mode} 최악 {ratio:.2f}:1 on {bg}",
         "cvd": "{kind}: {a} ↔ {b} 지각거리 {gap:.1f} — 색만으로 구분 불가 위험",
         "undef": "참조 {n}곳({files}{more}) — 정의 없음. 폴백도 없어 다크에서 투명/무효가 된다",
@@ -125,7 +131,8 @@ MSG = {
         "hardcoded_total": "절대색 {distinct}종 · 총 {sites}곳{capped}",
         "capped": " (위는 상위 15종만)",
         "unresolved": "다크 값 심볼 `{expr}` 을 해석하지 못했다 — 검사 사각지대",
-        "header": "[{plat}] 토큰 {n}개 · 다크 짝 {d}개 ({pct:.0f}%) · 배경 {bgs}",
+        "header": "[{plat}] 토큰 {n}개 = 시맨틱 {sem} + 원시스케일 {prim} · "
+                  "시맨틱 다크 짝 {d}/{sem} ({pct:.0f}%) · 배경 {bgs}",
         "clean": "✅ 위반 없음",
         "zero": "🔴 {plat}: 토큰을 0개 읽었다 — 경로나 포맷을 확인하라 ({root})\n"
                 "   (0건을 무결로 읽는 것이 이 도구가 예방하려는 실패다)",
@@ -188,6 +195,24 @@ def _hex_rgb(h, order="rgba"):
     if len(s) != 6:
         return None
     return (tuple(int(s[i:i + 2], 16) / 255.0 for i in (0, 2, 4)), 1.0)
+
+
+# 원시 스케일(primitive palette) 판정 — `--color-primary-600`, `--gray-50` 처럼
+# tint/shade 단계로 끝나는 이름.
+#
+# 🔴 원시 스케일에 다크 짝을 요구하면 안 된다. Radix·Material 3·Primer·Carbon·
+# Tailwind 가 공통으로 쓰는 구조는 "스케일은 모드 무관 재료로 고정하고, 시맨틱
+# 토큰이 모드별로 **다른 단계를 가리킨다**" 이다 (MD3: 같은 role 이 light 에서
+# primary40, dark 에서 primary80). 스케일 자체를 50↔950 으로 뒤집는 방식은
+# 표준이 아니다 — 모드 전환에 필요한 건 단순 반전이 아니라 대비·위계·채도
+# 보정이라 브랜드색·중립색·상태색에 일괄 적용되지 않는다.
+#
+# 그래서 mode completeness 는 **시맨틱 토큰에만** 적용한다.
+PRIMITIVE_SUFFIX = re.compile(r"-(?:50|950|[1-9]\d?00)$")
+
+
+def is_primitive(name):
+    return bool(PRIMITIVE_SUFFIX.search(name))
 
 
 # ── 로더 ────────────────────────────────────────────────────────────────────
@@ -378,6 +403,8 @@ def audit(tokens, bg_names=None, min_ratio=4.5):
                 "detail": _m("identical", hex=hexs(e["light"][0])),
             })
         elif "dark" not in e:
+            if is_primitive(n):
+                continue        # 원시 스케일은 모드 무관이 정상 — 위 주석 참조
             findings.append({
                 "kind": "missing-dark", "token": n, "severity": "error",
                 "detail": _m("missing_dark"),
@@ -510,6 +537,18 @@ def audit_refs(view_root, defined, platform="css"):
                 r"(?<![\w-])#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})(?![\w-])"
                 r"|(?:rgba?|hsla?|oklch|oklab|lab|lch)\([^)]*\)", src):
             hard.setdefault(m.group(0), []).append(rel)
+
+    # 시맨틱 레이어 우회 — 뷰가 원시 스케일을 직접 박으면 모드별로 다른 단계를
+    # 가리킬 지점이 사라진다. 다크에서 브랜드색을 한 단계 밝히려 해도 손잡이가 없다.
+    raw = {n: len(f) for n, f in seen_ref.items() if is_primitive(n) and n in defined}
+    if raw:
+        top = sorted(raw.items(), key=lambda x: -x[1])
+        findings.append({
+            "kind": "raw-scale-ref", "token": f"{len(raw)}종", "severity": "warn",
+            "distinct": len(raw), "sites": sum(raw.values()),
+            "detail": _m("raw_scale", distinct=len(raw), sites=sum(raw.values()),
+                         top=", ".join(f"{k}({v})" for k, v in top[:3])),
+        })
 
     for name, files in sorted(seen_ref.items()):
         if name in defined:
@@ -659,14 +698,21 @@ def main():
     if a.only:
         findings = [f for f in findings if f["kind"] in a.only]
 
-    n_dark = sum(1 for e in tokens.values() if "dark" in e)
+    # 커버리지는 **시맨틱 토큰 기준**으로 센다. 원시 스케일을 분모에 넣으면
+    # 모드 무관이 정상인 것들이 미달로 잡혀 수치가 실제보다 훨씬 나쁘게 보인다
+    # (실측: 같은 레포가 16% → 22%, 그리고 그 16%가 오판의 출발점이었다).
+    sem = {n: e for n, e in tokens.items() if not is_primitive(n)}
+    n_prim = len(tokens) - len(sem)
+    n_dark = sum(1 for e in sem.values() if "dark" in e)
     if a.json:
-        print(json.dumps({"platform": plat, "tokens": len(tokens), "with_dark": n_dark,
-                          "backgrounds": bgs, "findings": findings},
+        print(json.dumps({"platform": plat, "tokens": len(tokens),
+                          "semantic": len(sem), "primitive": n_prim,
+                          "with_dark": n_dark, "backgrounds": bgs, "findings": findings},
                          ensure_ascii=False, indent=2))
     else:
-        pct = n_dark / len(tokens) * 100
-        print(_m("header", plat=plat, n=len(tokens), d=n_dark, pct=pct, bgs=bgs) + "\n")
+        pct = n_dark / len(sem) * 100 if sem else 0
+        print(_m("header", plat=plat, n=len(tokens), prim=n_prim, sem=len(sem),
+                 d=n_dark, pct=pct, bgs=bgs) + "\n")
         if not findings:
             print(_m("clean"))
         order = {"undefined-ref": 0, "missing-dark": 1, "identical-modes": 2}

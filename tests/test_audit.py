@@ -40,9 +40,19 @@ def check(label, cond):
 print("case: css tokens + view refs")
 data, code = run(os.path.join(FIX, "css"), "--refs", os.path.join(FIX, "views"))
 
-# planted defect 1 — --brand-500 has no .dark counterpart
-check("missing-dark caught for --brand-500",
-      "missing-dark" in kinds_for(data, "--brand-500"))
+# planted defect 1 — a *semantic* token with no .dark counterpart
+check("missing-dark caught for semantic --surface-muted",
+      "missing-dark" in kinds_for(data, "--surface-muted"))
+
+# a raw scale step with no dark pair is CORRECT, not a defect: Radix/MD3/Tailwind
+# all keep the palette mode-agnostic and switch modes at the semantic layer.
+check("raw scale --brand-500 NOT flagged missing-dark",
+      "missing-dark" not in kinds_for(data, "--brand-500"))
+
+# but referencing that scale straight from a view removes the place where a
+# different step could be pointed to in dark mode
+check("raw-scale-ref reported when views use the palette directly",
+      any(f["kind"] == "raw-scale-ref" for f in data.get("findings", [])))
 
 # planted defect 2 — --brand-900 is referenced but never defined, no fallback
 check("undefined-ref caught for --brand-900",

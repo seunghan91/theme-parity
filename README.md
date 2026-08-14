@@ -77,7 +77,8 @@ python3 theme_parity.py app/src/main/res --platform android
 | Check | Severity | Trust |
 |---|---|---|
 | `undefined-ref` — referenced token has no definition, no fallback | error | **High.** Existence is a mechanical fact. |
-| `missing-dark` — no dark counterpart | error | **High**, but some tokens legitimately need none (logo colors, launcher backgrounds). |
+| `missing-dark` — a **semantic** token has no dark counterpart | error | **High.** Raw palette steps are excluded — see below. |
+| `raw-scale-ref` — a view references a palette step directly | warn | Medium. Structural signal, not a bug per se. |
 | `identical-modes` — dark is defined but equal to light | warn | High. Defined ≠ adapted. |
 | `missing-light` — dark defined with no light counterpart | error | High. Same check, opposite direction. |
 | `hardcoded-color` — color literal found in a scanned file | warn | **Low-medium.** Detects the literal, not whether it renders. |
@@ -85,6 +86,42 @@ python3 theme_parity.py app/src/main/res --platform android
 | `cvd-collision` — categorical colors indistinguishable under color-vision deficiency | warn/error | Medium. Use `--group <prefix>` for speaker/tag/chart color sets. |
 
 Sort your attention by that last column. A checker that reports 200 findings of mixed quality gets ignored entirely — which is worse than no checker.
+
+## Primitive scale vs semantic token
+
+Mode completeness is checked on **semantic tokens only**. A raw palette step
+(`--color-primary-600`, `--gray-50`) having no dark counterpart is **correct**,
+not a defect.
+
+This follows what Radix Colors, Material 3, Primer, Carbon and Tailwind all do:
+the palette stays mode-agnostic, and the semantic layer points at a *different
+step* per mode. MD3 states it plainly — the same role resolves to `primary40` in
+light and `primary80` in dark. The palette itself is never redefined.
+
+Which also means **flipping the scale (light 50 ↔ dark 950) is not the fix.**
+Switching modes needs contrast, hierarchy and saturation correction, not a linear
+inversion; brand, neutral and status colors do not survive the same flip.
+
+So the tool reports the gap one level up instead:
+
+```
+⚠ [raw-scale-ref] 23 raw scale steps referenced directly in 1503 places
+   (top: --color-primary-600(382), --color-primary-700(328), --color-primary-500(203))
+   — bypasses the semantic layer, so there is no place to point a different step in dark mode
+```
+
+That is the real debt. A view hard-coding `--color-primary-600` leaves no handle
+to brighten the brand color one step on a dark surface. The fix is a semantic
+token, not a darker palette:
+
+```css
+:root { --accent: var(--color-primary-600); }
+.dark { --accent: var(--color-primary-400); }   /* palette untouched */
+```
+
+Counting raw steps in the coverage denominator is what made an earlier internal
+report read 16% when the semantic figure was 20% — and that inflated number was
+the starting point of a wrong diagnosis.
 
 ## Limitations — read before trusting it
 

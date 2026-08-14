@@ -1,8 +1,14 @@
 :root {
+  /* semantic — mode completeness is required here */
   --surface-card: #FFFFFF;
   --text-body: #1A1A1A;
-  --brand-500: #10B981;
+  --surface-muted: #F3F4F6;   /* deliberately has no dark pair */
   --radius-md: 8px;
+
+  /* primitive scale — mode-agnostic by design; no dark pair expected */
+  --brand-50: #ECFDF5;
+  --brand-500: #10B981;
+  --brand-950: #022C22;
 }
 .dark {
   --surface-card: #1E1E1E;
