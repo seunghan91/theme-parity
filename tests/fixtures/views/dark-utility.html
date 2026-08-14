@@ -1,0 +1,22 @@
+<!-- Tailwind-style idiom: the token itself has no dark value. Dark is handled
+     where the token is consumed, by a variant that points somewhere else
+     entirely. Reporting these as "no dark entry" buries the real gaps. -->
+<span class="rounded-full border px-2 py-1
+             bg-[color:var(--util-light-bg)] text-[color:var(--util-light-fg)]
+             dark:bg-transparent dark:text-[color:var(--brand-50)]">covered</span>
+
+<!-- Padding below is real markup, not comments: comments are stripped before
+     the proximity scan, so a commented-out spacer would not separate anything
+     and this fixture would prove nothing. -->
+<p>Filler paragraph one. It exists only to put distance between the covered
+   element above and the control element below, so that the proximity window
+   cannot reach across.</p>
+<p>Filler paragraph two. Same purpose. The window is measured in characters of
+   source, so ordinary prose is the honest way to consume that budget.</p>
+<p>Filler paragraph three. Still filler, still deliberate, still here to keep
+   the two cases from contaminating each other during the scan.</p>
+<p>Filler paragraph four. Enough now — the control element follows.</p>
+
+<!-- Control: same shape of token, consumed with no dark handling anywhere near
+     it. This one is a genuine gap and must still be reported. -->
+<span class="bg-[color:var(--util-orphan-bg)]">orphan</span>

@@ -1,0 +1,8 @@
+<!-- Consumes the tokens declared in theme-tokens.ts. Must NOT be flagged. -->
+<div class="card" style="background: var(--ts-card-bg); color: var(--ts-card-text);">
+  themed by a runtime-injected TypeScript palette
+</div>
+
+<!-- Control: this one is declared nowhere, in .ts or otherwise. Widening the
+     declaration scan must not make real undefined references disappear. -->
+<div style="background: var(--ts-never-declared);">must still be flagged</div>

@@ -106,6 +106,78 @@ check("oklch() detected as hardcoded", any(t.startswith("oklch(") for t in lits)
 check("a URL glob (/path/*) does not swallow later declarations",
       "undefined-ref" not in kinds_for(data, "--url-guard-token"))
 
+print("case: Tailwind v4 — @theme source, at-rule before it")
+data, code = run(os.path.join(FIX, "css"), "--refs", os.path.join(FIX, "views"))
+
+# `@custom-variant dark (&:where(.dark, .dark *));` ends in a semicolon, so it
+# is not a selector. Absorbing it as one puts `.dark` in the selector of the
+# NEXT block and registers that whole block as dark — every token in it then
+# reads as "defined in both modes, same value".
+for tok in ("--color-tw-50", "--color-tw-500"):
+    check(f"primitive {tok} in @theme NOT flagged identical-modes",
+          "identical-modes" not in kinds_for(data, tok))
+check("paired --color-tw-surface NOT flagged identical-modes",
+      "identical-modes" not in kinds_for(data, "--color-tw-surface"))
+
+# Control: @theme must still be READ, not skipped. If it were skipped these
+# tokens would have no light entry at all, and the genuine gap below would be
+# invisible.
+check("@theme is read as the light source (no missing-light)",
+      "missing-light" not in kinds_for(data, "--color-tw-surface"))
+check("semantic --color-tw-muted with no dark pair IS still caught",
+      "missing-dark" in kinds_for(data, "--color-tw-muted"))
+
+# `700` and `9999` are valid hex digit strings. Treating a bare number as a
+# color invents #770000 / #99999999 and then reports contrast for a font weight.
+for tok in ("--tw-weight-bold", "--tw-z-top"):
+    check(f"non-color value {tok} NOT read as a color",
+          not kinds_for(data, tok))
+
+print("case: tokens declared in .ts/.js are declared")
+check("--ts-card-bg declared in a .ts palette NOT flagged undefined",
+      "undefined-ref" not in kinds_for(data, "--ts-card-bg"))
+check("--ts-card-text declared in a .ts palette NOT flagged undefined",
+      "undefined-ref" not in kinds_for(data, "--ts-card-text"))
+check("control: --ts-never-declared IS still flagged undefined",
+      "undefined-ref" in kinds_for(data, "--ts-never-declared"))
+
+print("case: dark handled by a utility at the call site, not on the token")
+for tok in ("--util-light-bg", "--util-light-fg"):
+    check(f"{tok} reclassified, not reported as missing-dark",
+          kinds_for(data, tok) == {"dark-handled-in-views"})
+# Reclassified, but NOT downgraded: proximity cannot prove every consumer
+# handles dark, so letting this pass a CI gate would hide real gaps.
+sev = {f["severity"] for f in data.get("findings", [])
+       if f["kind"] == "dark-handled-in-views"}
+check("dark-handled-in-views keeps error severity (classification, not amnesty)",
+      sev == {"error"})
+check("control: --util-orphan-bg with no dark handling IS still missing-dark",
+      "missing-dark" in kinds_for(data, "--util-orphan-bg"))
+check("control: --surface-muted (never consumed in views) stays missing-dark",
+      "missing-dark" in kinds_for(data, "--surface-muted"))
+
+print("case: dark value declared as an alias/function")
+check("--alias-glass NOT reported as missing-dark",
+      "missing-dark" not in kinds_for(data, "--alias-glass"))
+check("--alias-glass reported as an unparsed dark value instead",
+      "dark-unparsed" in kinds_for(data, "--alias-glass"))
+
+print("case: adversarial — narrowing must not hide real defects")
+# A quoted `;` is not a statement separator. Cutting there drops `:root` from
+# the selector and the token vanishes entirely — silently, as a pass.
+check("token under a selector with a quoted ';' is still read",
+      "identical-modes" in kinds_for(data, "--semi-guard"))
+# Recording "dark is declared" must not swallow the opposite asymmetry.
+check("dark-only alias still reports missing-light",
+      "missing-light" in kinds_for(data, "--dark-only-alias"))
+# Later declaration wins. A stale literal would be checked for contrast and
+# equality against a value that never reaches the screen.
+check("last dark declaration wins when it is an unresolvable alias",
+      kinds_for(data, "--cascade-last") == {"dark-unparsed"})
+# A property name inside a string literal is not a declaration.
+check("custom property named inside content:\"\" is not a dark declaration",
+      "missing-dark" in kinds_for(data, "--string-guard"))
+
 print("case: hex alpha byte order differs by platform")
 sys.path.insert(0, os.path.join(HERE, ".."))
 import theme_parity as _tp

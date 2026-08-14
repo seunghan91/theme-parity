@@ -5,6 +5,15 @@
   --surface-muted: #F3F4F6;   /* deliberately has no dark pair */
   --radius-md: 8px;
 
+  /* semantic, no dark value — dark is handled by a utility at the call site */
+  --util-light-bg: #EEF2FF;
+  --util-light-fg: #3730A3;
+  /* same shape, but nothing handles dark for it anywhere */
+  --util-orphan-bg: #FEF3C7;
+
+  /* dark value is an alias/function, not a literal — see .dark below */
+  --alias-glass: #F8FAFCB0;
+
   /* primitive scale — mode-agnostic by design; no dark pair expected */
   --brand-50: #ECFDF5;
   --brand-500: #10B981;
@@ -13,4 +22,7 @@
 .dark {
   --surface-card: #1E1E1E;
   --text-body: #F0F0F0;
+  /* Declared for dark, but as a function. Calling that "no dark entry" is a
+     wrong diagnosis, not a conservative one — the value IS overridden here. */
+  --alias-glass: color-mix(in srgb, var(--surface-card) 62%, transparent);
 }

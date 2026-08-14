@@ -1,0 +1,45 @@
+/* Cases from an adversarial review of the false-positive fixes. Each one is a
+ * way a *narrower* report could hide a real defect — the failure mode that
+ * matters more than noise. */
+
+/* (1) A semicolon inside a quoted attribute value is not a statement
+ * separator. Trimming at the last `;` to drop at-rules must not cut here, or
+ * `:root` disappears from the selector and the token is never read at all. */
+:root[data-label="a;b"] {
+  --semi-guard: #FFFFFF;
+}
+/* deliberately the SAME value as light: if the token is read at all, this
+ * must surface as identical-modes. "no finding" would then mean "never
+ * parsed", and a test asserting no finding would pass on a total failure. */
+.dark[data-label="a;b"] {
+  --semi-guard: #FFFFFF;
+}
+
+/* (2) Declared only for dark, and as an alias. Recording "dark exists" must
+ * not swallow the missing-light direction — that asymmetry is a real defect. */
+.dark {
+  --dark-only-alias: var(--surface-card);
+}
+
+/* (3) Later declarations win in CSS. If a literal is followed by an alias the
+ * tool cannot resolve, the honest answer is "unparsed", not the stale literal
+ * — otherwise contrast and identical-value checks run on a value that never
+ * reaches the screen. */
+:root {
+  --cascade-last: #1A1A1A;
+}
+.dark {
+  --cascade-last: #1A1A1A;
+}
+.dark {
+  --cascade-last: color-mix(in srgb, var(--surface-card) 70%, transparent);
+}
+
+/* (4) A custom property named inside a string is not a declaration. Counting
+ * it as one erases the genuine missing-dark on the real token. */
+:root {
+  --string-guard: #FFFFFF;
+}
+.dark .preview::before {
+  content: "--string-guard: #000000";
+}

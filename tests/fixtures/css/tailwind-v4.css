@@ -1,0 +1,40 @@
+/* Tailwind v4 shape: `@theme` is the token source, and a semicolon-terminated
+ * at-rule sits right before it. Both facts broke the parser once:
+ *   - the at-rule text was absorbed as the next block's selector, and it
+ *     contains `.dark`, so every token below was registered as a dark entry
+ *     identical to light
+ *   - `@theme` was not recognised as a light source at all
+ */
+/* The same names are also declared as plain custom properties, the way a
+ * project keeps a tokens.css alongside the Tailwind theme. That overlap is
+ * what turned the mis-parse into "defined in both modes, identical value"
+ * instead of a more visible "dark-only token". */
+:root {
+  --color-tw-50: #EBF4FF;
+  --color-tw-500: #3182F6;
+  --color-tw-surface: #FFFFFF;
+}
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* primitive scale — mode-agnostic by design, must NOT be reported */
+  --color-tw-50: #EBF4FF;
+  --color-tw-500: #3182F6;
+
+  /* semantic, properly paired below */
+  --color-tw-surface: #FFFFFF;
+
+  /* semantic with no dark pair — this one IS a defect and must still be caught */
+  --color-tw-muted: #F5F5F5;
+
+  /* non-color values. `700` and `9999` are valid hex digit strings; reading
+   * them as colors invented #770000 / #99999999 and produced contrast findings
+   * for a font weight. */
+  --tw-weight-bold: 700;
+  --tw-z-top: 9999;
+}
+
+.dark {
+  --color-tw-surface: #101010;
+}

@@ -99,6 +99,10 @@ MSG = {
         "identical": "{hex} in both modes — defined but not adapted",
         "missing_dark": "no dark entry — the light value is reused in dark mode",
         "missing_light": "no light entry — the dark value is reused in light mode",
+        "dark_in_views": "no dark entry, but a `dark:` utility swaps it at the call "
+                         "site — verify that every consumer does so",
+        "dark_unparsed": "dark is declared as `{expr}` — an alias/function this tool "
+                         "cannot resolve, so contrast and identical-value checks skip it",
         "raw_scale": "{distinct} raw scale step(s) referenced directly in {sites} place(s) "
                      "(top: {top}) — bypasses the semantic layer, so there is no place to "
                      "point a different step in dark mode",
@@ -122,6 +126,10 @@ MSG = {
         "identical": "{hex} 가 양 모드 동일 — 정의는 됐지만 적응 안 됨",
         "missing_dark": "dark 항목 없음 — 라이트 값이 다크에서 그대로 쓰인다",
         "missing_light": "light 항목 없음 — 다크 값이 라이트에서 그대로 쓰인다",
+        "dark_in_views": "dark 항목은 없지만 쓰이는 자리에서 `dark:` 로 갈아끼운다 "
+                         "— 소비처 전부가 그렇게 하는지 확인 필요",
+        "dark_unparsed": "다크 값이 `{expr}` — alias/함수라 해석 못 함. 선언은 있으나 "
+                         "대비·동일값 검사에서 빠진다(사각지대)",
         "raw_scale": "원시 스케일 {distinct}종을 {sites}곳에서 직접 참조 (상위: {top}) "
                      "— 시맨틱 레이어를 우회해, 다크에서 다른 단계를 가리킬 지점이 없다",
         "low_contrast": "{mode} 최악 {ratio:.2f}:1 on {bg}",
@@ -254,13 +262,35 @@ def load_colorsets(root):
     return tokens
 
 
+def _last_top_level_semicolon(s):
+    """따옴표 밖 마지막 `;` 의 인덱스. 없으면 -1."""
+    q, idx = None, -1
+    for i, ch in enumerate(s):
+        if q:
+            if ch == q and (i == 0 or s[i - 1] != "\\"):
+                q = None
+        elif ch in "\"'":
+            q = ch
+        elif ch == ";":
+            idx = i
+    return idx
+
+
+# 다크 블록에서 색으로 못 읽은 값 중 **실제 CSS 값**만 "선언됨"으로 친다.
+# 아무 문자열이나 받으면 `content: "--x: #000"` 같은 문자열 리터럴이 선언으로
+# 둔갑해, 그 토큰의 진짜 missing-dark 가 사라진다 (codex 지적).
+DARK_VALUE_EXPR = re.compile(
+    r"^(?:var\(|color-mix\(|light-dark\(|rgb|hsl|hwb|oklch|oklab|lab\(|lch\(|color\()",
+    re.I)
+
+
 def load_css(root):
     """CSS 커스텀 프로퍼티. :root=light, .dark/[data-theme=dark]/prefers-color-scheme=dark.
 
     한 파일 안에서 라이트/다크가 나란히 있어야 짝 누락을 셀 수 있다. 모드별 파일
     분리는 이 문제를 파일 레벨에서 재생산하므로, 여기서는 디렉토리 전체를 한 벌로 본다.
     """
-    light, dark = {}, {}
+    light, dark, dark_expr = {}, {}, {}
     files = sorted(_walk(root, lambda f: f.endswith((".css", ".scss"))))
     for path in files:
         try:
@@ -271,6 +301,21 @@ def load_css(root):
         # 셀렉터 { ... } 블록을 훑어 다크 셀렉터인지 판정
         for m in re.finditer(r"([^{}]+)\{([^{}]*)\}", css):
             sel, body = m.group(1).strip(), m.group(2)
+            # 🔴 셀렉터는 직전 `}` 이후 전부가 아니라 **마지막 `;` 이후**다.
+            # 세미콜론으로 끝나는 at-rule(`@import`, `@custom-variant`, `@charset`)
+            # 은 블록이 없으므로 다음 블록의 셀렉터 텍스트로 딸려온다. Tailwind v4
+            # 의 `@custom-variant dark (&:where(.dark, .dark *));` 가 대표적인데,
+            # 이 한 줄에 `.dark` 가 들어 있어 **바로 뒤 `@theme` 블록 전체가 다크로
+            # 등록**된다. 실측(한 Tailwind v4 레포): 원시 스케일 43종이 통째로 "양 모드 동일"
+            # 오탐으로 나왔고, 동시에 같은 블록의 시맨틱 토큰은 다크 짝이 있는 것으로
+            # 둔갑해 **진짜 누락이 은폐**됐다. 오탐보다 이쪽이 더 나쁘다.
+            #
+            # 단 따옴표 안의 `;` 는 구분자가 아니다 — `:root[data-label="a;b"]` 에서
+            # 통째로 잘라내면 `:root` 가 사라져 그 블록의 토큰을 **하나도 못 읽는다**.
+            # 못 읽은 결과는 "위반 없음"으로 보이므로 이 실수는 조용히 통과한다.
+            cut = _last_top_level_semicolon(sel)
+            if cut >= 0:
+                sel = sel[cut + 1:].strip()
             low = sel.lower()
             is_dark = (".dark" in low or 'data-theme="dark"' in low
                        or "data-theme='dark'" in low or "[data-theme=dark]" in low)
@@ -281,10 +326,17 @@ def load_css(root):
                     r"@media[^{]*prefers-color-scheme:\s*dark[^{]*\{(?:[^{}]|\{[^{}]*\})*$",
                     head, re.S):
                 is_dark = True
-            if not (is_dark or ":root" in low or "html" in low or "body" in low):
+            # `@theme` 은 Tailwind v4 의 토큰 정본이다. 여기를 라이트 소스로 세지
+            # 않으면 v4 프로젝트의 팔레트가 통째로 안 읽힌다.
+            if not (is_dark or ":root" in low or "html" in low or "body" in low
+                    or low.startswith("@theme")):
                 continue
             for name, val in re.findall(r"(--[\w-]+)\s*:\s*([^;]+);", body):
-                rgb = _hex_rgb(val) if re.fullmatch(r"\s*#?[0-9a-fA-F]{3,8}\s*", val) else None
+                # `#` 없는 값은 색이 아니다. CSS 에 접두 없는 hex 색은 없는데
+                # `#?` 로 열어두면 `--font-weight-bold: 700` 이 #770000 으로,
+                # `--z-max: 9999` 가 #99999999 로 읽힌다 — 폰트 굵기에 대해
+                # 대비 미달과 다크 짝 누락을 보고하게 된다(실측: 두 레포에서 재현).
+                rgb = _hex_rgb(val) if re.fullmatch(r"\s*#[0-9a-fA-F]{3,8}\s*", val) else None
                 if not rgb:
                     m2 = re.match(r"\s*rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)"
                                   r"(?:[,/\s]+([\d.]+))?\s*\)", val)
@@ -293,11 +345,25 @@ def load_css(root):
                                float(m2.group(4) or 1))
                 if rgb:
                     (dark if is_dark else light)[name] = rgb
+                    # 나중 선언이 이긴다 — 앞서 해석 못 한 alias 는 물러난다.
+                    if is_dark:
+                        dark_expr.pop(name, None)
+                elif is_dark and DARK_VALUE_EXPR.match(val.strip()):
+                    # 값이 alias(`var(--x)`)나 함수(`color-mix(...)`)면 색으로는
+                    # 못 읽는다. 그렇다고 없는 셈 치면 "다크 항목 없음 — 라이트
+                    # 값이 그대로 쓰인다"는 **틀린 진단**이 나간다. 실제로는
+                    # 선언이 있고, 우리가 못 읽을 뿐이다. 존재는 기록하고 값을
+                    # 모른다는 사실을 따로 보고한다 — 사각지대는 사각지대로.
+                    dark_expr[name] = val.strip()
+                    dark.pop(name, None)
     tokens = {}
     for n, v in light.items():
         tokens[n] = {"light": v}
     for n, v in dark.items():
         tokens.setdefault(n, {})["dark"] = v
+    for n, expr in dark_expr.items():
+        if "dark" not in tokens.get(n, {}):
+            tokens.setdefault(n, {})["dark_expr"] = expr
     return tokens
 
 
@@ -385,6 +451,12 @@ BG_EXCLUDE = ("inverse", "border", "hairline", "divider", "outline", "stroke",
 # 이 전경 토큰들은 전용 배경에만 얹히므로 일반 검사에서 제외한다.
 FG_EXCLUDE = ("oninverse", "on_inverse", "inverse")
 
+# 소비처의 다크 처리 — Tailwind 의 `dark:` 변형자, 또는 `.dark` 스코프 선택자.
+DARK_CTX = re.compile(r"dark:|\.dark\b")
+# 근접 창(문자). 한 클래스 속성 안의 라이트/다크 선언 쌍을 덮을 만큼 넓고,
+# 무관한 다음 요소까지 삼키지 않을 만큼 좁게.
+PROX = 400
+
 
 def audit(tokens, bg_names=None, min_ratio=4.5):
     findings = []
@@ -403,8 +475,23 @@ def audit(tokens, bg_names=None, min_ratio=4.5):
                 "detail": _m("identical", hex=hexs(e["light"][0])),
             })
         elif "dark" not in e:
+            if "light" not in e:
+                # 다크에만 존재. 값을 못 읽었더라도 라이트 누락은 라이트 누락이다
+                # — 여기서 dark-unparsed(warn) 로 흘리면 다크 전용 토큰의 비대칭이
+                # error 등급에서 통째로 빠진다 (codex 지적).
+                findings.append({
+                    "kind": "missing-light", "token": n, "severity": "error",
+                    "detail": _m("missing_light"),
+                })
+                continue
             if is_primitive(n):
                 continue        # 원시 스케일은 모드 무관이 정상 — 위 주석 참조
+            if "dark_expr" in e:
+                findings.append({
+                    "kind": "dark-unparsed", "token": n, "severity": "warn",
+                    "detail": _m("dark_unparsed", expr=e["dark_expr"]),
+                })
+                continue
             findings.append({
                 "kind": "missing-dark", "token": n, "severity": "error",
                 "detail": _m("missing_dark"),
@@ -476,8 +563,13 @@ def collect_declared(*roots):
     '정의 여부'와 '색으로 파싱되는가'는 분리해야 한다.
     """
     names = set()
+    # 🔴 참조는 `.ts`/`.js` 에서 걷으면서(audit_refs) 선언은 걷지 않으면 비대칭이
+    # 생긴다. 사용자별 테마를 TS 팔레트에 두고 인라인 style 로 주입하는 구조가
+    # 흔한데, 그 토큰이 전부 "미정의"로 잡힌다 — 컴포넌트 한 계열이 통째로
+    # 오탐이 된다(실측: 한 Svelte 레포의 프로필 컴포넌트 16종 전부).
     exts = (".css", ".scss", ".erb", ".html", ".haml", ".slim",
-            ".vue", ".svelte", ".jsx", ".tsx")
+            ".vue", ".svelte", ".jsx", ".tsx",
+            ".ts", ".js", ".mjs", ".cjs", ".json", ".rb")
     for root in roots:
         if not root or not os.path.exists(root):
             continue
@@ -513,9 +605,12 @@ def audit_refs(view_root, defined, platform="css"):
     findings = []
     # CSS/SCSS/JS/TS 도 포함한다. 이전에는 템플릿만 봐서 스타일시트 안의
     # `var(--없음)` 과 CSS-in-JS 를 통째로 놓쳤다 (codex 지적).
+    # `.rb` — ViewComponent·Phlex·헬퍼는 클래스 문자열을 Ruby 쪽에 둔다. 템플릿만
+    # 보면 그 프로젝트의 스타일 결정이 통째로 안 보인다(실측: 한 Rails 레포의 뱃지 6톤이
+    # 전부 BadgeComponent 안에 있어 다크 처리 66건이 하나도 안 잡혔다).
     exts = (".erb", ".html", ".haml", ".slim", ".vue", ".svelte", ".jsx", ".tsx",
-            ".xml", ".css", ".scss", ".js", ".ts", ".mjs")
-    seen_ref, hard = {}, {}
+            ".xml", ".css", ".scss", ".js", ".ts", ".mjs", ".rb")
+    seen_ref, hard, dark_handled = {}, {}, set()
     for path in sorted(_walk(view_root, lambda f: f.endswith(exts))):
         try:
             src = open(path, encoding="utf-8", errors="ignore").read()
@@ -527,6 +622,17 @@ def audit_refs(view_root, defined, platform="css"):
             if m.group(2):        # 폴백이 있으면 조용히 죽지 않는다
                 continue
             seen_ref.setdefault(m.group(1), []).append(rel)
+            # 토큰에 다크 값이 없어도, 쓰이는 자리에서 `dark:` 유틸리티가 다른
+            # 토큰을 가리키면 모드 전환은 이미 처리된 것이다 (Tailwind 관용구:
+            # `bg-[color:var(--x-bg)] … dark:bg-transparent dark:text-[…-300]`).
+            # 이걸 모르면 유틸리티 레이어에서 다크를 다루는 프로젝트는 시맨틱
+            # 토큰 대부분이 missing-dark 로 뜬다(실측: 한 레포에서 66건).
+            # 판정은 근접성으로만 한다 — 어느 요소에 걸린 선언인지까지는 파서
+            # 없이 알 수 없으므로, "주변에 다크 처리가 아예 없다"는 확실한 쪽만
+            # 결함으로 남기고 나머지는 사람이 볼 수 있게 종류를 나눈다.
+            s = m.start()
+            if DARK_CTX.search(src[max(0, s - PROX):s + PROX]):
+                dark_handled.add(m.group(1))
         if platform == "android":
             # `@color/x` 는 Android 리소스 참조다. 플랫폼 구분 없이 수집하면
             # 웹 검사에서 ic_launcher_* 같은 것이 미정의 CSS 변수로 둔갑한다.
@@ -583,7 +689,7 @@ def audit_refs(view_root, defined, platform="css"):
                          sites=sum(len(v) for v in hard.values()),
                          capped=_m("capped") if len(ranked) > 15 else ""),
         })
-    return findings
+    return findings, dark_handled
 
 
 def audit_categorical(tokens, group_prefix, mode="dark"):
@@ -685,7 +791,19 @@ def main():
         # (정본 트리 + 뷰 안 인라인 선언). 색 파서가 못 읽은 비색상 토큰을
         # 미정의로 오탐하지 않기 위해 반드시 분리해서 모은다.
         declared = set(tokens) | collect_declared(a.root, a.refs)
-        findings += audit_refs(a.refs, declared, platform=plat)
+        ref_findings, dark_handled = audit_refs(a.refs, declared, platform=plat)
+        findings += ref_findings
+        # 토큰에 다크 값이 없어도 소비처에서 `dark:` 로 갈아끼우면 결함이 아니다.
+        # 지우지 않고 종류만 바꾼다 — 근접성 판정이라 확신할 수 없고, 지워버리면
+        # 진짜 누락이 이 경로로 조용히 사라진다.
+        # 🔴 severity 는 낮추지 않는다. 근접 판정은 "이 토큰 근처에 다크 처리가
+        # 있다"까지만 알 뿐, 소비처 **전부**가 그런지는 모른다. 열 곳에서 쓰이고
+        # 한 곳만 다크를 다뤄도 재분류된다. 등급까지 내리면 CI 가 진짜 결함을
+        # 통과시키므로, 바꾸는 것은 **종류(=읽는 사람의 분류)** 뿐이다.
+        for f in findings:
+            if f["kind"] == "missing-dark" and f["token"] in dark_handled:
+                f["kind"] = "dark-handled-in-views"
+                f["detail"] = _m("dark_in_views")
     for name, expr in unresolved:
         findings.append({"kind": "unresolved-dark", "token": name, "severity": "warn",
                          "detail": _m("unresolved", expr=expr)})
@@ -703,7 +821,7 @@ def main():
     # (실측: 같은 레포가 16% → 22%, 그리고 그 16%가 오판의 출발점이었다).
     sem = {n: e for n, e in tokens.items() if not is_primitive(n)}
     n_prim = len(tokens) - len(sem)
-    n_dark = sum(1 for e in sem.values() if "dark" in e)
+    n_dark = sum(1 for e in sem.values() if "dark" in e or "dark_expr" in e)
     if a.json:
         print(json.dumps({"platform": plat, "tokens": len(tokens),
                           "semantic": len(sem), "primitive": n_prim,
@@ -715,7 +833,8 @@ def main():
                  d=n_dark, pct=pct, bgs=bgs) + "\n")
         if not findings:
             print(_m("clean"))
-        order = {"undefined-ref": 0, "missing-dark": 1, "identical-modes": 2}
+        order = {"undefined-ref": 0, "missing-dark": 1, "identical-modes": 2,
+                 "dark-unparsed": 3, "dark-handled-in-views": 4}
         for f in sorted(findings, key=lambda x: (x["severity"] != "error",
                                                  order.get(x["kind"], 9), x["kind"])):
             mark = "🔴" if f["severity"] == "error" else "⚠"
