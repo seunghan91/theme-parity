@@ -103,6 +103,7 @@ MSG = {
                          "site — verify that every consumer does so",
         "dark_unparsed": "dark is declared as `{expr}` — an alias/function this tool "
                          "cannot resolve, so contrast and identical-value checks skip it",
+        "light_unparsed": "light is declared as `{expr}` — same blind spot, opposite mode",
         "raw_scale": "{distinct} raw scale step(s) referenced directly in {sites} place(s) "
                      "(top: {top}) — bypasses the semantic layer, so there is no place to "
                      "point a different step in dark mode",
@@ -130,6 +131,7 @@ MSG = {
                          "— 소비처 전부가 그렇게 하는지 확인 필요",
         "dark_unparsed": "다크 값이 `{expr}` — alias/함수라 해석 못 함. 선언은 있으나 "
                          "대비·동일값 검사에서 빠진다(사각지대)",
+        "light_unparsed": "라이트 값이 `{expr}` — 같은 사각지대, 반대 모드",
         "raw_scale": "원시 스케일 {distinct}종을 {sites}곳에서 직접 참조 (상위: {top}) "
                      "— 시맨틱 레이어를 우회해, 다크에서 다른 단계를 가리킬 지점이 없다",
         "low_contrast": "{mode} 최악 {ratio:.2f}:1 on {bg}",
@@ -290,7 +292,7 @@ def load_css(root):
     한 파일 안에서 라이트/다크가 나란히 있어야 짝 누락을 셀 수 있다. 모드별 파일
     분리는 이 문제를 파일 레벨에서 재생산하므로, 여기서는 디렉토리 전체를 한 벌로 본다.
     """
-    light, dark, dark_expr = {}, {}, {}
+    light, dark, dark_expr, light_expr = {}, {}, {}, {}
     files = sorted(_walk(root, lambda f: f.endswith((".css", ".scss"))))
     for path in files:
         try:
@@ -346,8 +348,10 @@ def load_css(root):
                 if rgb:
                     (dark if is_dark else light)[name] = rgb
                     # 나중 선언이 이긴다 — 앞서 해석 못 한 alias 는 물러난다.
-                    if is_dark:
-                        dark_expr.pop(name, None)
+                    (dark_expr if is_dark else light_expr).pop(name, None)
+                elif DARK_VALUE_EXPR.match(val.strip()) and not is_dark:
+                    light_expr[name] = val.strip()
+                    light.pop(name, None)
                 elif is_dark and DARK_VALUE_EXPR.match(val.strip()):
                     # 값이 alias(`var(--x)`)나 함수(`color-mix(...)`)면 색으로는
                     # 못 읽는다. 그렇다고 없는 셈 치면 "다크 항목 없음 — 라이트
@@ -364,6 +368,9 @@ def load_css(root):
     for n, expr in dark_expr.items():
         if "dark" not in tokens.get(n, {}):
             tokens.setdefault(n, {})["dark_expr"] = expr
+    for n, expr in light_expr.items():
+        if "light" not in tokens.get(n, {}):
+            tokens.setdefault(n, {})["light_expr"] = expr
     return tokens
 
 
@@ -446,8 +453,12 @@ BG_HINTS = ("surface", "background", "bg", "card", "sheet", "elevated", "canvas"
 #  - inverse: 반전 표면. 그 위엔 전용 토큰(textOnInverse)만 얹히므로 일반 전경과 짝지으면 전부 오탐.
 #  - border/hairline/divider/outline/stroke: 선이지 면이 아니다. 글자가 그 위에 얹히지 않는다.
 #  - overlay/dim/ripple/scrim: 반투명 레이어. 합성 결과가 배경이라 단독 대비 계산이 무의미.
+# glass/material/blur/vibrancy — iOS 계열의 반투명 재질. overlay 와 같은 이유로
+# 뺀다: 뒤에 무엇이 깔리느냐로 실제 배경이 정해지므로 토큰 값 단독 대비는
+# 의미가 없다 (실측: 이것 때문에 정상 전경색이 2.23:1 로 보고됐다).
 BG_EXCLUDE = ("inverse", "border", "hairline", "divider", "outline", "stroke",
-              "overlay", "dim", "ripple", "scrim", "shadow")
+              "overlay", "dim", "ripple", "scrim", "shadow",
+              "glass", "material", "blur", "vibrancy")
 # 이 전경 토큰들은 전용 배경에만 얹히므로 일반 검사에서 제외한다.
 FG_EXCLUDE = ("oninverse", "on_inverse", "inverse")
 
@@ -476,6 +487,12 @@ def audit(tokens, bg_names=None, min_ratio=4.5):
             })
         elif "dark" not in e:
             if "light" not in e:
+                if "light_expr" in e:
+                    findings.append({
+                        "kind": "light-unparsed", "token": n, "severity": "warn",
+                        "detail": _m("light_unparsed", expr=e["light_expr"]),
+                    })
+                    continue
                 # 다크에만 존재. 값을 못 읽었더라도 라이트 누락은 라이트 누락이다
                 # — 여기서 dark-unparsed(warn) 로 흘리면 다크 전용 토큰의 비대칭이
                 # error 등급에서 통째로 빠진다 (codex 지적).
@@ -497,6 +514,12 @@ def audit(tokens, bg_names=None, min_ratio=4.5):
                 "detail": _m("missing_dark"),
             })
         elif "light" not in e:
+            if "light_expr" in e:
+                findings.append({
+                    "kind": "light-unparsed", "token": n, "severity": "warn",
+                    "detail": _m("light_unparsed", expr=e["light_expr"]),
+                })
+                continue
             # dark 만 있는 토큰. light-first 를 가정하고 조용히 통과시키면
             # 반대 방향 누락이 영영 안 보인다 — 방향을 대칭으로 둔다.
             findings.append({
@@ -834,7 +857,8 @@ def main():
         if not findings:
             print(_m("clean"))
         order = {"undefined-ref": 0, "missing-dark": 1, "identical-modes": 2,
-                 "dark-unparsed": 3, "dark-handled-in-views": 4}
+                 "dark-unparsed": 3, "dark-handled-in-views": 4,
+                 "light-unparsed": 5}
         for f in sorted(findings, key=lambda x: (x["severity"] != "error",
                                                  order.get(x["kind"], 9), x["kind"])):
             mark = "🔴" if f["severity"] == "error" else "⚠"

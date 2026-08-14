@@ -43,3 +43,25 @@
 .dark .preview::before {
   content: "--string-guard: #000000";
 }
+
+/* (5) Light is the alias and dark is the literal — the mirror of case (3).
+ * Reporting "no light entry" would be the same wrong diagnosis in the other
+ * direction: the declaration exists, the tool just cannot read it. */
+:root {
+  --alias-light-only: var(--surface-card);
+}
+.dark {
+  --alias-light-only: #223344;
+}
+
+/* (6) Translucent materials are not backgrounds. What sits behind them decides
+ * the real contrast, so measuring a foreground against the token value alone
+ * produces a number that means nothing. */
+:root {
+  --glass-panel: #FFFFFFB0;
+  --fg-on-glass: #4A4A4A;
+}
+.dark {
+  --glass-panel: #00000080;
+  --fg-on-glass: #D8D8D8;
+}

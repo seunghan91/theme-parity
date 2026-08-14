@@ -82,6 +82,7 @@ python3 theme_parity.py app/src/main/res --platform android
 | `identical-modes` — dark is defined but equal to light | warn | High. Defined ≠ adapted. |
 | `missing-light` — dark defined with no light counterpart | error | High. Same check, opposite direction. |
 | `dark-unparsed` — dark **is** declared, as an alias or function this tool cannot resolve | warn | High as a fact, zero as a verdict. The override exists; its value is unknown, so contrast and identical-value checks skip the token. |
+| `light-unparsed` — same, for the light value | warn | Same. Reported so the blind spot has a size instead of vanishing. |
 | `dark-handled-in-views` — token has no dark value, but a `dark:` utility swaps it where it is consumed | error | **Medium.** Proximity-based, so it cannot tell whether *every* consumer does so. Reclassified for reading, **not** downgraded — see limitations. |
 | `hardcoded-color` — color literal found in a scanned file | warn | **Low-medium.** Detects the literal, not whether it renders. |
 | `low-contrast` — WCAG pair check | warn/error | **Low by default.** Backgrounds are guessed from token names. Pass `--bg` to make it meaningful. |
@@ -141,7 +142,7 @@ This was built against a specific stack and is honest about that:
 - **`hsl()`, named colors (`red`, `transparent`) and `color(display-p3 …)` are not parsed as light values.** Such a token is not read at all, so it never reaches the mode-completeness check — a false negative, not a false positive. Only hex and `rgb()/rgba()` are understood. In a *dark* block these values are at least recorded as `dark-unparsed`; in a light block they are invisible.
 - **A TypeScript type declaration counts as a definition.** `interface Tokens { '--card-bg': string }` declares a *name*, not a value, but the declaration scan cannot tell the two apart — so a token that is only ever typed, never assigned, stops being reported as undefined.
 - **A bare number is never read as a color.** `--font-weight-bold: 700` and `--z-max: 9999` are valid hex digit strings; parsing them as `#770000` / `#99999999` produced contrast findings for a font weight. CSS has no prefix-less hex color, so `#` is required.
-- **`low-contrast` infers backgrounds from token names** and produces false positives. It is a hint, not a verdict.
+- **`low-contrast` infers backgrounds from token names** and produces false positives. It is a hint, not a verdict. Translucent materials (`glass`, `material`, `blur`, `overlay`, `scrim`, …) are excluded from the background candidates entirely — what sits behind them decides the real contrast, so a ratio against the token value alone would be meaningless.
 - **Reference scanning is text-based, not semantic.** Comments are stripped before scanning, but string literals are not distinguished from code. A color literal inside a JS string or documentation snippet can be reported as hardcoded.
 - **`hardcoded-color` means "a color literal was found in this file"**, not "this color is rendered". Gradients, SVG fills, and example code all match.
 - **Android resolution is simplified.** `values-night` is treated as dark and everything else as light; qualifier precedence (`values-night-v31`, `values-land`, …) is not modeled the way the platform resolves it.

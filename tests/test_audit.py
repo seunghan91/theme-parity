@@ -178,6 +178,16 @@ check("last dark declaration wins when it is an unresolvable alias",
 check("custom property named inside content:\"\" is not a dark declaration",
       "missing-dark" in kinds_for(data, "--string-guard"))
 
+check("light declared as an alias is not reported as missing-light",
+      "missing-light" not in kinds_for(data, "--alias-light-only"))
+check("it is reported as light-unparsed instead",
+      "light-unparsed" in kinds_for(data, "--alias-light-only"))
+# A translucent material must not be used as a contrast baseline.
+against = {f.get("against") for f in data.get("findings", [])
+           if f["kind"] == "low-contrast"}
+check("translucent --glass-panel is not treated as a background",
+      "--glass-panel" not in against)
+
 print("case: hex alpha byte order differs by platform")
 sys.path.insert(0, os.path.join(HERE, ".."))
 import theme_parity as _tp
