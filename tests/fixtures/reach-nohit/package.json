@@ -1,0 +1,5 @@
+{
+  "name": "reach-nohit-fixture",
+  "private": true,
+  "comment": "진입점은 찾았지만 그래프가 감사 대상 css 에 하나도 닿지 않는다. 그래프 실패 케이스."
+}

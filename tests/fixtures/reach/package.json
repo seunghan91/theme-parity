@@ -1,0 +1,5 @@
+{
+  "name": "reach-fixture",
+  "private": true,
+  "comment": "프로젝트 루트 마커. 도달성 스캔 범위가 여기서 멈춘다."
+}

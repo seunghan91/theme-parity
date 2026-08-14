@@ -19,6 +19,8 @@ Usage:
   theme_parity.py <token-root> --refs <view-dir>   # undefined refs + hardcoded
   theme_parity.py <token-root> --json              # exit 1 when errors exist
   theme_parity.py <token-root> --lang ko           # message language
+  theme_parity.py <token-root> --entry <file>      # app entry point (repeatable)
+  theme_parity.py <token-root> --no-reachability   # skip the reachability pass
 
 Supported sources:
   xcassets  Xcode `.colorset/Contents.json` (recursive; float and 0x hex)
@@ -116,6 +118,17 @@ MSG = {
         "hardcoded_total": "{distinct} literal color(s) · {sites} occurrence(s){capped}",
         "capped": " (top 15 listed)",
         "unresolved": "could not resolve dark symbol `{expr}` — blind spot",
+        "unreachable": "never loaded by the app — {via}. {tok} token(s) defined here; "
+                       "{held} finding(s) withheld from the defect count",
+        "via_none": "no file imports it",
+        "via_storybook": "imported only from `.storybook/` — a Storybook-only stylesheet",
+        "via_files": "its only importers ({files}) are themselves unreachable",
+        "reach_unknown": "note: reachability undecided ({why}) — every stylesheet is "
+                         "counted as live. Inference failing is not evidence of a dead file.",
+        "why_no_root": "no project root found (package.json / vite.config / .git)",
+        "why_no_entry": "no application entry point found under {root}",
+        "why_no_hit": "the entry graph under {root} reached none of the audited "
+                      "stylesheets, so the graph — not the files — is what is missing",
         "header": "[{plat}] {n} tokens = {sem} semantic + {prim} primitive scale · "
                   "semantic with dark {d}/{sem} ({pct:.0f}%) · backgrounds {bgs}",
         "clean": "✅ no violations",
@@ -143,6 +156,17 @@ MSG = {
         "hardcoded_total": "절대색 {distinct}종 · 총 {sites}곳{capped}",
         "capped": " (위는 상위 15종만)",
         "unresolved": "다크 값 심볼 `{expr}` 을 해석하지 못했다 — 검사 사각지대",
+        "unreachable": "앱이 로드하지 않는 스타일시트 — {via}. 여기 정의된 토큰 {tok}종, "
+                       "결함 {held}건을 집계에서 뺐다",
+        "via_none": "어떤 파일도 import 하지 않는다",
+        "via_storybook": "`.storybook/` 에서만 import 된다 — Storybook 전용",
+        "via_files": "import 하는 곳({files})도 전부 도달 불가다",
+        "reach_unknown": "note: 도달성 판정 보류 ({why}) — 모든 스타일시트를 살아있는 것으로 "
+                         "센다. 추론 실패는 파일이 죽었다는 근거가 아니다.",
+        "why_no_root": "프로젝트 루트를 못 찾았다 (package.json / vite.config / .git)",
+        "why_no_entry": "{root} 아래에서 앱 진입점을 못 찾았다",
+        "why_no_hit": "{root} 의 진입점 그래프가 감사 대상 스타일시트에 하나도 닿지 않았다 "
+                      "— 없는 것은 파일이 아니라 그래프다",
         "header": "[{plat}] 토큰 {n}개 = 시맨틱 {sem} + 원시스케일 {prim} · "
                   "시맨틱 다크 짝 {d}/{sem} ({pct:.0f}%) · 배경 {bgs}",
         "clean": "✅ 위반 없음",
@@ -168,7 +192,8 @@ def _m(key, **kw):
 # (실측: 한 레포에서 보고된 미정의 15종 중 대부분이 워크트리 사본이었다).
 SKIP_DIRS = (".build", "builds", "node_modules", "Pods", "DerivedData", "vendor",
              "tmp", ".git", "build", "dist", ".next", "Carthage", "coverage",
-             ".claude", "worktrees", ".worktrees", "Examples", "example")
+             ".claude", "worktrees", ".worktrees", "Examples", "example",
+             "storybook-static", ".svelte-kit", ".nuxt")
 
 
 def _walk(root, want):
@@ -288,11 +313,15 @@ DARK_VALUE_EXPR = re.compile(
     re.I)
 
 
-def load_css(root):
+def load_css(root, origins=None):
     """CSS 커스텀 프로퍼티. :root=light, .dark/[data-theme=dark]/prefers-color-scheme=dark.
 
     한 파일 안에서 라이트/다크가 나란히 있어야 짝 누락을 셀 수 있다. 모드별 파일
     분리는 이 문제를 파일 레벨에서 재생산하므로, 여기서는 디렉토리 전체를 한 벌로 본다.
+
+    `origins` 를 주면 토큰명 → 그 이름이 선언된 파일들(realpath) 을 채운다. 디렉토리를
+    한 벌로 보는 대신, **어느 파일에서 왔는지**는 잃지 않기 위해서다 — 도달성 판정이
+    파일 단위이므로 출처 없이는 죽은 파일의 토큰을 골라낼 수 없다.
     """
     light, dark, dark_expr, light_expr = {}, {}, {}, {}
     files = sorted(_walk(root, lambda f: f.endswith((".css", ".scss"))))
@@ -336,6 +365,8 @@ def load_css(root):
                     or low.startswith("@theme")):
                 continue
             for name, val in re.findall(r"(--[\w-]+)\s*:\s*([^;]+);", body):
+                if origins is not None:
+                    origins.setdefault(name, set()).add(os.path.realpath(path))
                 # `#` 없는 값은 색이 아니다. CSS 에 접두 없는 hex 색은 없는데
                 # `#?` 로 열어두면 `--font-weight-bold: 700` 이 #770000 으로,
                 # `--z-max: 9999` 가 #99999999 로 읽힌다 — 폰트 굵기에 대해
@@ -447,6 +478,204 @@ def load_swift(root):
             if entry:
                 tokens[name] = entry
     return tokens, unresolved
+
+
+# ── 도달성 ──────────────────────────────────────────────────────────────────
+# 감사한 스타일시트가 실제로 앱 번들에 실리는가. 실측(한 Rails+Vite 레포): 토큰
+# 정본으로 지목된 `css/tokens.css` 를 진입점이 한 번도 import 하지 않았고, 그 트리
+# 전체에 `@import` 가 0건이라 다른 css 가 끌어오지도 않았다. 유일한 소비처는
+# `.storybook/preview.js` — 즉 Storybook 전용 파일이었다. 그 파일에서 나온 결함
+# 97종이 전부 무의미한 경고였고, 수치가 커서 **진짜 결함 5종을 덮었다.**
+#
+# 🔴 추론 실패와 도달 불가는 다른 사건이다. 진입점을 못 찾았을 때 "도달 불가"로
+# 단정하면 정상 프로젝트를 통째로 오진한다 — 그건 이 오탐을 고치면서 더 큰 오탐을
+# 들여오는 짓이다. 그래서 도달 불가는 아래 두 조건이 **모두** 참일 때만 주장한다:
+#
+#   (1) 진입점을 최소 한 개 찾았다
+#   (2) 그 진입점 그래프가 감사 대상 스타일시트 중 **최소 한 개**에 실제로 닿았다
+#
+# (2) 가 결정적이다. 이게 없으면 "우리가 그래프를 못 만든 것"과 "파일이 정말 고아인
+# 것"이 구분되지 않는다 — 별칭(`@/`, `~/`) 해석 실패나 우리가 모르는 번들러 관례
+# 하나면 멀쩡한 프로젝트의 css 가 전부 도달 불가로 보인다. 둘 중 하나라도 거짓이면
+# 판정을 포기하고(status=unknown) 전부 살아있는 것으로 센다. 침묵이 오진보다 낫다.
+CODE_EXT = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts",
+            ".svelte", ".vue", ".astro")
+STYLE_EXT = (".css", ".scss", ".sass", ".less", ".pcss", ".postcss")
+# 확장자 없는 지정자를 붙여볼 순서. 빈 문자열이 먼저 — 이미 확장자가 있으면 그대로.
+RESOLVE_EXT = ("", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts",
+               ".svelte", ".vue", ".astro") + STYLE_EXT
+
+# import 문 네 형태. CSS 의 `@import` 는 따옴표 없는 url() 도 쓴다.
+IMPORT_RE = re.compile(
+    r"""(?:^|[\s;{}()=])import\s+(?:[^'"()]*?\sfrom\s+)?["']([^"']+)["']"""
+    r"""|import\s*\(\s*["']([^"']+)["']\s*\)"""
+    r"""|require\s*\(\s*["']([^"']+)["']\s*\)"""
+    r"""|@import\s+(?:url\(\s*)?["']([^"']+)["']"""
+    r"""|@import\s+url\(\s*([^"')]+)\s*\)""", re.M)
+
+# 진입점 관례. 디렉토리 이름으로 잡는 것(Vite Ruby `entrypoints/`, Webpacker
+# `packs/`)이 가장 확실하고, 나머지는 루트 상대경로로 못박는다 — 아무 `index.ts`나
+# 진입점으로 세면 컴포넌트 배럴 파일이 진입점이 되어 그래프가 전부 초록이 된다.
+ENTRY_DIRS = ("entrypoints", "packs")
+ENTRY_RELS = ("main", "index", "src/main", "src/index", "src/entry", "src/entry-client",
+              "src/app", "src/root", "app/root", "app/layout", "src/app/layout",
+              "pages/_app", "src/pages/_app", "app/javascript/application")
+PROJECT_MARKS = ("package.json", "vite.config.js", "vite.config.ts", "vite.config.mjs",
+                 "webpack.config.js", "rollup.config.js")
+
+
+def _project_root(*paths):
+    """스캔 범위. package.json 등 마커가 있는 가장 가까운 조상, 없으면 레포 루트."""
+    for p in paths:
+        if not p:
+            continue
+        d = os.path.abspath(p)
+        if os.path.isfile(d):
+            d = os.path.dirname(d)
+        for _ in range(10):
+            if any(os.path.exists(os.path.join(d, m)) for m in PROJECT_MARKS):
+                return d
+            if os.path.isdir(os.path.join(d, ".git")):
+                return d        # 레포 밖으로는 나가지 않는다
+            nd = os.path.dirname(d)
+            if nd == d:
+                break
+            d = nd
+    return None
+
+
+def _resolve_import(spec, importer, scan_root):
+    """상대/루트 지정자 → 실제 파일 경로. bare 지정자(패키지·별칭)는 해석하지 않는다."""
+    spec = spec.split("?")[0].split("#")[0].strip()
+    if not spec:
+        return None
+    if spec.startswith("/"):
+        base = os.path.normpath(os.path.join(scan_root, spec.lstrip("/")))
+    elif spec.startswith("."):
+        base = os.path.normpath(os.path.join(os.path.dirname(importer), spec))
+    else:
+        return None
+    for ext in RESOLVE_EXT:
+        if os.path.isfile(base + ext):
+            return os.path.realpath(base + ext)
+    for ext in RESOLVE_EXT[1:]:
+        cand = os.path.join(base, "index" + ext)
+        if os.path.isfile(cand):
+            return os.path.realpath(cand)
+    return None
+
+
+def build_import_graph(scan_root):
+    """(importer → 대상 집합, 해석 실패한 스타일 지정자 basename → importer 집합).
+
+    두 번째 값이 중요하다. `@/styles/tokens.css` 처럼 별칭을 쓴 import 는 우리가
+    해석하지 못하는데, 그걸 없는 셈 치면 살아있는 파일이 고아로 보인다. 파일명이라도
+    맞으면 도달한 것으로 쳐 준다 — 이 방향의 오차는 결함을 늘리지 않고 줄인다.
+    """
+    edges, unresolved = {}, {}
+    for path in _walk(scan_root, lambda f: f.endswith(CODE_EXT + STYLE_EXT)):
+        try:
+            src = _strip_comments(open(path, encoding="utf-8", errors="ignore").read())
+        except Exception:
+            continue
+        rp = os.path.realpath(path)
+        for m in IMPORT_RE.finditer(src):
+            spec = next((g for g in m.groups() if g), None)
+            if not spec:
+                continue
+            target = _resolve_import(spec, path, scan_root)
+            if target:
+                edges.setdefault(rp, set()).add(target)
+            elif spec.split("?")[0].endswith(STYLE_EXT):
+                unresolved.setdefault(os.path.basename(spec.split("?")[0]),
+                                      set()).add(rp)
+    return edges, unresolved
+
+
+def find_entries(scan_root):
+    """앱 진입점 추정. `.storybook/` 은 앱이 아니므로 진입점으로 세지 않는다."""
+    entries = set()
+    for path in _walk(scan_root, lambda f: f.endswith(CODE_EXT)):
+        rel = os.path.relpath(path, scan_root)
+        parts = rel.split(os.sep)
+        if any(p.startswith(".storybook") for p in parts):
+            continue
+        if len(parts) >= 2 and parts[-2] in ENTRY_DIRS:
+            entries.add(os.path.realpath(path))
+        elif os.path.splitext(rel)[0].replace(os.sep, "/") in ENTRY_RELS:
+            entries.add(os.path.realpath(path))
+    # 최상위 HTML 의 <script src> / <link href> — 번들러 없는 Vite SPA 관례.
+    for path in _walk(scan_root, lambda f: f.endswith(".html")):
+        rel = os.path.relpath(path, scan_root)
+        if rel.count(os.sep) > 1 or rel.startswith(".storybook"):
+            continue
+        try:
+            src = open(path, encoding="utf-8", errors="ignore").read()
+        except Exception:
+            continue
+        for spec in re.findall(r"<(?:script[^>]*\ssrc|link[^>]*\shref)\s*=\s*"
+                               r"[\"']([^\"']+)[\"']", src, re.I):
+            target = _resolve_import(spec, path, scan_root)
+            if target:
+                entries.add(target)
+    return entries
+
+
+def _reach(entries, edges):
+    seen, stack = set(), list(entries)
+    while stack:
+        n = stack.pop()
+        if n in seen:
+            continue
+        seen.add(n)
+        stack.extend(edges.get(n, ()))
+    return seen
+
+
+def check_reachability(audited, token_root, refs=None, explicit_entries=None):
+    """감사 대상 스타일시트가 앱 진입점에서 도달 가능한지.
+
+    반환: {"status": "ok"|"unknown", ...}. "ok" 일 때만 `unreachable` 이 의미를 갖는다.
+    """
+    audited = {os.path.realpath(p) for p in audited}
+    if not audited:
+        return {"status": "unknown", "reason": _m("why_no_root")}
+    seeds = list(explicit_entries or []) + [token_root] + ([refs] if refs else [])
+    scan_root = _project_root(*seeds)
+    if not scan_root:
+        return {"status": "unknown", "reason": _m("why_no_root")}
+
+    if explicit_entries:
+        entries = {os.path.realpath(e) for e in explicit_entries}
+    else:
+        entries = find_entries(scan_root)
+    if not entries:
+        return {"status": "unknown", "scan_root": scan_root,
+                "reason": _m("why_no_entry", root=scan_root)}
+
+    edges, unresolved = build_import_graph(scan_root)
+    reached = _reach(entries, edges)
+    # 해석 못 한 스타일 지정자: 살아있는 파일이 부른 것이면 파일명으로 살려 준다.
+    for basename, importers in unresolved.items():
+        if importers & reached:
+            reached |= {f for f in audited if os.path.basename(f) == basename}
+
+    if not (audited & reached):
+        # 조건 (2) 불충족. 파일이 죽은 게 아니라 그래프가 없는 것일 수 있다.
+        return {"status": "unknown", "scan_root": scan_root, "entries": sorted(entries),
+                "reason": _m("why_no_hit", root=scan_root)}
+
+    importers = {}
+    for src, dsts in edges.items():
+        for d in dsts:
+            importers.setdefault(d, set()).add(src)
+    out = {}
+    for f in sorted(audited - reached):
+        who = sorted(importers.get(f, ()))
+        sb = bool(who) and all(".storybook" in p.split(os.sep) for p in who)
+        out[f] = {"importers": who, "storybook_only": sb}
+    return {"status": "ok", "scan_root": scan_root, "entries": sorted(entries),
+            "reached": sorted(audited & reached), "unreachable": out}
 
 
 # ── 감사 ────────────────────────────────────────────────────────────────────
@@ -784,6 +1013,11 @@ def main():
     ap.add_argument("--only", action="append", default=[], metavar="KIND",
                     help="이 kind 만 보고 (예: undefined-ref). 신뢰도 높은 검사만 "
                          "CI 게이트로 쓰고 나머지는 참고로 둘 때.")
+    ap.add_argument("--entry", action="append", default=[], metavar="PATH",
+                    help="앱 진입점 파일 (반복 지정 가능). 도달성 추론이 프로젝트 구조를 "
+                         "못 알아볼 때 직접 못박는 용도 — 지정하면 자동 추론은 쓰지 않는다.")
+    ap.add_argument("--no-reachability", action="store_true",
+                    help="도달성 판정을 끄고 모든 스타일시트를 살아있는 것으로 센다.")
     a = ap.parse_args()
     global LANG
     LANG = a.lang
@@ -792,11 +1026,11 @@ def main():
     if plat is None:
         sys.exit(_m("nofmt", root=a.root))
 
-    unresolved = []
+    unresolved, origins = [], {}
     if plat == "xcassets":
         tokens = load_colorsets(a.root)
     elif plat == "css":
-        tokens = load_css(a.root)
+        tokens = load_css(a.root, origins)
     elif plat == "android":
         tokens = load_android(a.root)
     else:
@@ -811,6 +1045,53 @@ def main():
                              ensure_ascii=False, indent=2))
             sys.exit(1)
         sys.exit(msg)
+
+    # 도달성 — 감사한 css 중 앱이 실제로 로드하지 않는 파일을 가려낸다.
+    # 판정은 audit **전에** 한다. 죽은 파일의 토큰을 남겨두면 결함 목록에서만
+    # 빼는 것으로 끝나지 않는다 — 배경 추정·대비 계산·커버리지 분모가 전부 그
+    # 토큰을 포함한 채 나와서, 헤더 수치와 결함 목록이 서로 다른 세계를 말한다.
+    reach, dead_findings = {"status": "off"}, []
+    if plat == "css" and not a.no_reachability:
+        for e in a.entry:
+            if not os.path.exists(e):
+                sys.exit(f"--entry path does not exist: {e}")
+        audited = sorted(set().union(*origins.values())) if origins else []
+        reach = check_reachability(audited, a.root, a.refs, a.entry)
+        if reach["status"] == "ok" and reach["unreachable"]:
+            gone = set(reach["unreachable"])
+            # 살아있는 파일에도 선언이 있으면 그 토큰은 살아있다 — 죽은 파일에만
+            # 존재하는 이름만 뺀다. `files and` 가 없으면 출처를 모르는 토큰
+            # (빈 집합)이 공집합 포함 규칙에 걸려 전부 죽은 것으로 처리된다.
+            # 뺀 건수는 **빼기 전 전체 집합**을 기준으로 센다. 죽은 토큰만 따로
+            # 모아 감사하면 그 부분집합에 다크 선언이 없어서 no-dark-mode 한 건으로
+            # 접히고, 실제로 침묵시킨 97건이 "1건"으로 보고된다.
+            withheld = {}
+            for f in audit(dict(tokens), None, a.min)[0]:
+                withheld[f.get("token")] = withheld.get(f.get("token"), 0) + 1
+            dead = {n: tokens.pop(n) for n, files in sorted(origins.items())
+                    if files and files <= gone and n in tokens}
+            for path, info in sorted(reach["unreachable"].items()):
+                mine = {n: e for n, e in dead.items() if path in origins[n]}
+                if not mine:
+                    continue
+                # "N종을 뺐다"만 말하면 무엇을 침묵시켰는지 알 수 없고, 침묵한
+                # 검사기는 통과와 구분되지 않는다.
+                held = sum(withheld.get(n, 0) for n in mine)
+                if info["storybook_only"]:
+                    via = _m("via_storybook")
+                elif info["importers"]:
+                    via = _m("via_files", files=", ".join(
+                        os.path.relpath(p, reach["scan_root"])
+                        for p in info["importers"][:3]))
+                else:
+                    via = _m("via_none")
+                dead_findings.append({
+                    "kind": "unreachable-stylesheet", "severity": "warn",
+                    "token": os.path.relpath(path, reach["scan_root"]),
+                    "tokens_defined": len(mine), "findings_withheld": held,
+                    "storybook_only": info["storybook_only"],
+                    "detail": _m("unreachable", via=via, tok=len(mine), held=held),
+                })
 
     if a.bg:
         want = [b.strip() for b in a.bg.split(",")]
@@ -845,6 +1126,7 @@ def main():
     for name, expr in unresolved:
         findings.append({"kind": "unresolved-dark", "token": name, "severity": "warn",
                          "detail": _m("unresolved", expr=expr)})
+    findings += dead_findings
 
     if a.ignore:
         import fnmatch
@@ -863,16 +1145,22 @@ def main():
     if a.json:
         print(json.dumps({"platform": plat, "tokens": len(tokens),
                           "semantic": len(sem), "primitive": n_prim,
-                          "with_dark": n_dark, "backgrounds": bgs, "findings": findings},
+                          "with_dark": n_dark, "backgrounds": bgs,
+                          "reachability": reach, "findings": findings},
                          ensure_ascii=False, indent=2))
     else:
         pct = n_dark / len(sem) * 100 if sem else 0
         print(_m("header", plat=plat, n=len(tokens), prim=n_prim, sem=len(sem),
-                 d=n_dark, pct=pct, bgs=bgs) + "\n")
+                 d=n_dark, pct=pct, bgs=bgs))
+        # 판정 보류는 조용히 넘기지 않는다. 도달 불가 파일이 하나도 안 뜬 것이
+        # "전부 살아있다"인지 "판정을 못 했다"인지 읽는 사람이 알아야 한다.
+        if reach.get("status") == "unknown":
+            print(_m("reach_unknown", why=reach["reason"]))
+        print()
         if not findings:
             print(_m("clean"))
-        order = {"undefined-ref": 0, "missing-dark": 1, "identical-modes": 2,
-                 "dark-unparsed": 3, "dark-handled-in-views": 4,
+        order = {"undefined-ref": 0, "unreachable-stylesheet": 0, "missing-dark": 1,
+                 "identical-modes": 2, "dark-unparsed": 3, "dark-handled-in-views": 4,
                  "light-unparsed": 5}
         for f in sorted(findings, key=lambda x: (x["severity"] != "error",
                                                  order.get(x["kind"], 9), x["kind"])):

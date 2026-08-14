@@ -201,6 +201,101 @@ check("reported once as no-dark-mode, not per token",
 check("no per-token missing-dark noise", "missing-dark" not in nd_kinds)
 check("it is a warning, not a build-breaking error", nd_code == 0)
 
+print("case: reachability — a stylesheet the app never loads")
+REACH = os.path.join(FIX, "reach")
+RCSS = os.path.join(REACH, "app", "frontend", "css")
+rd, _ = run(RCSS)
+reach = rd.get("reachability", {})
+unreach = {f["token"]: f for f in rd.get("findings", [])
+           if f["kind"] == "unreachable-stylesheet"}
+
+check("the entry graph reaches a verdict on this fixture",
+      reach.get("status") == "ok")
+
+# CONTROL PAIR. The *same* defect — a semantic token with no dark counterpart —
+# is planted in a live sheet and in a dead one. Asserting only the withheld half
+# cannot tell "reachability worked" apart from "the checker went quiet", so the
+# live half is asserted first and every withheld claim is paired with one.
+check("control: the identical defect in a LIVE stylesheet is still reported",
+      "missing-dark" in kinds_for(rd, "--reach-live-muted"))
+check("the same defect in an unreachable stylesheet is withheld",
+      "missing-dark" not in kinds_for(rd, "--reach-orphan-muted"))
+check("control: a sheet reached through a css @import counts as live",
+      "missing-dark" in kinds_for(rd, "--reach-shared-muted"))
+# An alias (`@/…`) the resolver cannot expand must not turn a live sheet into a
+# corpse; the filename fallback exists precisely so this error leans toward
+# reporting more, not less.
+check("control: an unresolvable aliased import is rescued, not buried",
+      "missing-dark" in kinds_for(rd, "--reach-aliased-muted"))
+check("a Storybook-only stylesheet's defect is withheld too",
+      "missing-dark" not in kinds_for(rd, "--reach-sb-muted"))
+
+orphan = unreach.get("app/frontend/css/reach-orphan.css")
+sbsheet = unreach.get("app/frontend/css/reach-sb.css")
+check("the dead sheet is summarised once, not silently dropped", orphan is not None)
+check("one summary per dead file, not one per token", len(unreach) == 2)
+check("the summary states how many findings it silenced",
+      bool(orphan) and orphan["findings_withheld"] == 2)
+check("the Storybook-only sheet is identified as such",
+      bool(sbsheet) and sbsheet["storybook_only"] is True)
+check("a plain orphan is NOT mislabelled Storybook-only",
+      bool(orphan) and orphan["storybook_only"] is False)
+check("live stylesheets are not listed as unreachable",
+      not any(n in k for k in unreach
+              for n in ("reach-app.css", "reach-shared.css", "reach-aliased.css")))
+
+nr, _ = run(RCSS, "--no-reachability")
+check("--no-reachability turns the pass off",
+      nr.get("reachability", {}).get("status") == "off")
+check("... and the withheld defects come back as ordinary defects",
+      "missing-dark" in kinds_for(nr, "--reach-orphan-muted")
+      and "missing-dark" in kinds_for(nr, "--reach-sb-muted"))
+check("... with no unreachable-stylesheet summaries",
+      not any(f["kind"] == "unreachable-stylesheet" for f in nr.get("findings", [])))
+# The bookkeeping has to close. A summary that under-reports what it silenced
+# hides findings just as effectively as saying nothing at all.
+kept = [f for f in rd.get("findings", []) if f["kind"] != "unreachable-stylesheet"]
+withheld = sum(f["findings_withheld"] for f in unreach.values())
+check("withheld counts account for every finding that disappeared",
+      len(nr.get("findings", [])) - len(kept) == withheld)
+
+ed, _ = run(RCSS, "--entry", os.path.join(REACH, ".storybook", "preview.js"))
+enames = {os.path.basename(p) for p in ed.get("reachability", {}).get("unreachable", {})}
+check("--entry replaces the inferred graph (app sheet now unreachable)",
+      ed.get("reachability", {}).get("status") == "ok" and "reach-app.css" in enames)
+check("... and the sheet that entry does load is not called unreachable",
+      "reach-sb.css" not in enames)
+bad, bad_code = run(RCSS, "--entry", os.path.join(REACH, "does-not-exist.ts"))
+check("--entry with a nonexistent path fails loudly instead of inferring",
+      bad_code != 0 and "--entry" in bad.get("_stderr", ""))
+
+print("case: reachability undecided is NOT a verdict of unreachable")
+# Losing the graph and proving a file dead look identical from the finding list.
+# They are opposite facts, so the undecided case must withhold nothing.
+ne, _ = run(os.path.join(FIX, "reach-noentry", "css"))
+check("no entry point found → status unknown",
+      ne.get("reachability", {}).get("status") == "unknown")
+check("... nothing is declared unreachable",
+      not any(f["kind"] == "unreachable-stylesheet" for f in ne.get("findings", [])))
+check("... and the planted defect is still counted",
+      "missing-dark" in kinds_for(ne, "--noentry-muted"))
+
+nh, _ = run(os.path.join(FIX, "reach-nohit", "css"))
+nh_reach = nh.get("reachability", {})
+check("entry found but the graph hit no audited sheet → still unknown",
+      nh_reach.get("status") == "unknown" and bool(nh_reach.get("entries")))
+check("... a genuinely orphan sheet is NOT accused while undecided",
+      not any(f["kind"] == "unreachable-stylesheet" for f in nh.get("findings", [])))
+check("... every planted defect is still counted",
+      "missing-dark" in kinds_for(nh, "--nohit-muted")
+      and "missing-dark" in kinds_for(nh, "--nohit-orphan-muted"))
+
+# Regression guard for every case above this section: the reachability pass runs
+# on the main css fixture too, and must not quietly withhold anything there.
+guard, _ = run(os.path.join(FIX, "css"), "--refs", os.path.join(FIX, "views"))
+check("the main css fixture loses nothing to reachability",
+      not any(f["kind"] == "unreachable-stylesheet" for f in guard.get("findings", [])))
+
 print("case: hex alpha byte order differs by platform")
 sys.path.insert(0, os.path.join(HERE, ".."))
 import theme_parity as _tp

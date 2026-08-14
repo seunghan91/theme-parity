@@ -1,0 +1,7 @@
+/* 아무도 import 하지 않는다. 프로덕션 번들에 실리지 않으므로 여기 심은 결함은
+   화면에 나타날 수 없다 — 대조군(reach-app.css)과 **똑같은 결함**을 심어 둔다.
+   한쪽만 잡히고 한쪽은 안 잡혀야 도달성 판정이 실제로 동작한 것이다. */
+:root {
+  --reach-orphan-muted:   #767676;   /* reach-live-muted 와 동일한 결함 */
+  --reach-orphan-surface: #FFFFFF;
+}

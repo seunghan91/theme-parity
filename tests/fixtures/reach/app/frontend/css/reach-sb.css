@@ -1,0 +1,5 @@
+/* `.storybook/preview.js` 에서만 import 된다 — Storybook 전용.
+   앱 번들에는 없으므로 결함 집계 대상이 아니고, 그 사실을 표기할 수 있어야 한다. */
+:root {
+  --reach-sb-muted: #767676;   /* 역시 같은 결함 */
+}

@@ -1,0 +1,5 @@
+{
+  "name": "reach-noentry-fixture",
+  "private": true,
+  "comment": "프로젝트 마커는 있지만 진입점 관례에 맞는 파일이 하나도 없다. 도달성 추론 실패 케이스."
+}
