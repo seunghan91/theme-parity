@@ -188,6 +188,19 @@ against = {f.get("against") for f in data.get("findings", [])
 check("translucent --glass-panel is not treated as a background",
       "--glass-panel" not in against)
 
+check("interpolated var(--name{expr}) is not a token reference",
+      "undefined-ref" not in kinds_for(data, "--dyn"))
+check("interpolated var(--name${expr}) is not a token reference either",
+      "undefined-ref" not in kinds_for(data, "--dyn2"))
+
+print("case: a project with no dark mode at all")
+nd, nd_code = run(os.path.join(FIX, "nodark"))
+nd_kinds = [f["kind"] for f in nd.get("findings", [])]
+check("reported once as no-dark-mode, not per token",
+      nd_kinds.count("no-dark-mode") == 1)
+check("no per-token missing-dark noise", "missing-dark" not in nd_kinds)
+check("it is a warning, not a build-breaking error", nd_code == 0)
+
 print("case: hex alpha byte order differs by platform")
 sys.path.insert(0, os.path.join(HERE, ".."))
 import theme_parity as _tp

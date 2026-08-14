@@ -99,6 +99,7 @@ MSG = {
         "identical": "{hex} in both modes — defined but not adapted",
         "missing_dark": "no dark entry — the light value is reused in dark mode",
         "missing_light": "no light entry — the dark value is reused in light mode",
+        "no_dark_mode": "no dark declaration anywhere — {n} semantic token(s) are light-only. This is \"dark mode not adopted\", not {n} separate defects",
         "dark_in_views": "no dark entry, but a `dark:` utility swaps it at the call "
                          "site — verify that every consumer does so",
         "dark_unparsed": "dark is declared as `{expr}` — an alias/function this tool "
@@ -127,6 +128,7 @@ MSG = {
         "identical": "{hex} 가 양 모드 동일 — 정의는 됐지만 적응 안 됨",
         "missing_dark": "dark 항목 없음 — 라이트 값이 다크에서 그대로 쓰인다",
         "missing_light": "light 항목 없음 — 다크 값이 라이트에서 그대로 쓰인다",
+        "no_dark_mode": "다크 선언이 어디에도 없다 — 시맨틱 {n}종이 라이트 전용. 결함 {n}건이 아니라 \"다크모드 미도입\" 한 건이다",
         "dark_in_views": "dark 항목은 없지만 쓰이는 자리에서 `dark:` 로 갈아끼운다 "
                          "— 소비처 전부가 그렇게 하는지 확인 필요",
         "dark_unparsed": "다크 값이 `{expr}` — alias/함수라 해석 못 함. 선언은 있으나 "
@@ -471,6 +473,14 @@ PROX = 400
 
 def audit(tokens, bg_names=None, min_ratio=4.5):
     findings = []
+    # 다크 선언이 **하나도** 없으면 그것은 토큰 N개의 결함이 아니라 "다크모드를
+    # 도입하지 않았다"는 한 가지 사실이다. 45줄로 늘어놓으면 실제로 다크를 쓰는
+    # 프로젝트의 진짜 누락과 구분되지 않는다.
+    no_dark_at_all = not any("dark" in e or "dark_expr" in e for e in tokens.values())
+    if no_dark_at_all:
+        sem = [n for n in tokens if not is_primitive(n)]
+        return ([{"kind": "no-dark-mode", "token": f"{len(sem)}종", "severity": "warn",
+                  "detail": _m("no_dark_mode", n=len(sem))}] if sem else []), []
     if bg_names:
         bgs = [b for b in bg_names if b in tokens]
     else:
@@ -643,6 +653,11 @@ def audit_refs(view_root, defined, platform="css"):
         rel = os.path.relpath(path, view_root)
         for m in re.finditer(r"var\(\s*(--[\w-]+)\s*(,)?", src):
             if m.group(2):        # 폴백이 있으면 조용히 죽지 않는다
+                continue
+            # `var(--p${i})` · `var(--p{expr})` — 이름 뒤에 보간이 붙는 형태.
+            # 잡힌 `--p` 는 토큰명이 아니라 접두사 조각이다. 이름이 하이픈으로
+            # 끝나는 경우만 걸러서는 부족했다 (실측: 한 레포의 미정의 17곳 전부).
+            if src[m.end(1):m.end(1) + 1] in ("$", "#", "{"):
                 continue
             seen_ref.setdefault(m.group(1), []).append(rel)
             # 토큰에 다크 값이 없어도, 쓰이는 자리에서 `dark:` 유틸리티가 다른

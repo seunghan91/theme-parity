@@ -83,6 +83,7 @@ python3 theme_parity.py app/src/main/res --platform android
 | `missing-light` — dark defined with no light counterpart | error | High. Same check, opposite direction. |
 | `dark-unparsed` — dark **is** declared, as an alias or function this tool cannot resolve | warn | High as a fact, zero as a verdict. The override exists; its value is unknown, so contrast and identical-value checks skip the token. |
 | `light-unparsed` — same, for the light value | warn | Same. Reported so the blind spot has a size instead of vanishing. |
+| `no-dark-mode` — the source declares no dark value anywhere | warn | High. Replaces the per-token `missing-dark` list: a project that has not adopted dark mode is one fact, not N defects. |
 | `dark-handled-in-views` — token has no dark value, but a `dark:` utility swaps it where it is consumed | error | **Medium.** Proximity-based, so it cannot tell whether *every* consumer does so. Reclassified for reading, **not** downgraded — see limitations. |
 | `hardcoded-color` — color literal found in a scanned file | warn | **Low-medium.** Detects the literal, not whether it renders. |
 | `low-contrast` — WCAG pair check | warn/error | **Low by default.** Backgrounds are guessed from token names. Pass `--bg` to make it meaningful. |

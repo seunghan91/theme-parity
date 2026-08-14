@@ -1,0 +1,12 @@
+/* A project that simply has not adopted dark mode. Its `data-theme` values are
+ * brand skins, not appearances, so there is no dark block anywhere. Listing
+ * every token as `missing-dark` here drowns out the projects that DO have a
+ * dark mode with real gaps in it. */
+:root {
+  --surface: #FFFFFF;
+  --text-body: #101828;
+  --accent: #FFE400;
+}
+:root[data-theme="pop"] {
+  --accent: #FF5C00;
+}

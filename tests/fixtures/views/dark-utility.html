@@ -20,3 +20,7 @@
 <!-- Control: same shape of token, consumed with no dark handling anywhere near
      it. This one is a genuine gap and must still be reported. -->
 <span class="bg-[color:var(--util-orphan-bg)]">orphan</span>
+
+<!-- Interpolated custom-property names: `--p` here is a prefix fragment, not a
+     token. The old guard only caught names ending in a hyphen. -->
+<div style="color: var(--dyn{idx}); background: var(--dyn2${i})">interpolated</div>
